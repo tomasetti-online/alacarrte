@@ -13,7 +13,7 @@
     <img src="/static/logo.png" alt="">
     <div>
       <h1>ALACarrte</h1>
-      <p class="sub">YouTube → hi-fi audio (ALAC / FLAC) · <a href="/settings" style="color:#7c3aed">Cookies</a> · <a href="https://github.com/tjtomasetti/alacarrte" target="_blank" style="color:#7c3aed">Open Source</a></p>
+      <p class="sub">YouTube → hi-fi audio (ALAC / FLAC) · <a href="/settings" style="color:#7c3aed">Cookies</a> · <a href="https://github.com/tomasetti-online/alacarrte" target="_blank" style="color:#7c3aed">Open Source</a> · <span style="color:#fbbf24;font-size:0.75rem;font-weight:600;background:rgba(251,191,36,.12);padding:2px 8px;border-radius:4px">BETA</span></p>
     </div>
   </header>
 
@@ -40,12 +40,15 @@
   <hr style="border:none;border-top:1px solid #1c1430;margin:48px 0 24px">
 
   <div style="font-size:0.75rem;color:#5a4a7a;line-height:1.6;margin-bottom:24px">
-    <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Status:</strong> <span id="status-badge" style="color:#6ee7b7">● Online</span></p>
+    <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Status:</strong> <span id="status-badge" style="color:#6ee7b7">● Online</span> <span style="color:#fbbf24;font-weight:600">BETA</span></p>
     <p style="margin-bottom:8px"><strong style="color:#7a6aaa">Adding to your music library:</strong> Download the ZIP, unzip, then drag the .m4a or .flac files into your music player (iTunes, Music, Plexamp, VLC, etc.). Files are auto-tagged with artist, album, track number, and cover art.</p>
     <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Clipboard:</strong> When you load this page, it checks your clipboard for a YouTube link so you don't have to paste manually. The clipboard is read once in your browser and never sent to our server unless you submit it.</p>
     <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Privacy:</strong> Download URLs are processed in real-time and not permanently stored. No personal data, cookies, or tracking are collected. Logs are minimal and not shared.</p>
-    <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Disclaimer:</strong> This tool converts publicly available YouTube content. You are responsible for the content you download and how you use it. Respect copyright and platform terms of service.</p>
+    <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Disclaimer:</strong> ALACarrte is provided as-is, in BETA. You are solely responsible for the content you download and how you use it. Respect copyright laws and platform terms of service. This tool is for personal, non-commercial use. No warranty or liability is assumed.</p>
   </div>
+
+  <!-- Ad banner -->
+  <div id="ad-banner" style="display:none;text-align:center;margin-bottom:24px;padding:12px;background:#1a1230;border-radius:8px;min-height:60px"></div>
 
   <details id="ext-section">
     <summary>Chrome Extension &nearr;</summary>
@@ -469,6 +472,15 @@ setInterval(checkDoneCount, 5000);
     }
   } catch(e) {}
   setTimeout(healthPoll, 15000);
+})();
+
+// Inject ad script if configured
+(function() {
+  var ad = '{{ ad_script | e }}';
+  if (ad) {
+    var banner = document.getElementById('ad-banner');
+    if (banner) { banner.style.display = ''; banner.innerHTML = ad; }
+  }
 })();
 
 function escHtml(s) {

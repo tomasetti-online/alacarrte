@@ -19,6 +19,7 @@ CONCURRENCY = int(os.environ.get("ALACARTTE_CONCURRENCY", "6"))
 SLEEP_REQUESTS = os.environ.get("ALACARTTE_SLEEP_REQUESTS", "1.5")
 RATE_LIMIT = int(os.environ.get("ALACARTTE_RATE_LIMIT", "60"))
 DL_COOLDOWN = int(os.environ.get("ALACARTTE_DL_COOLDOWN", "1"))
+AD_SCRIPT = os.environ.get("ALACARTTE_AD_SCRIPT", "")
 
 tasks = {}
 LOCK = threading.Lock()
@@ -41,10 +42,17 @@ def bg_cleanup():
 
 threading.Thread(target=bg_cleanup, daemon=True).start()
 
-def run_ytdl(args, timeout=180):
+def run_ytdl(args, timeout=180, task=None):
     cmd = ["yt-dlp", "--no-warnings", "--no-progress"] + args
     # Session-based cookies first, then fall back to global cookies file
-    sid = session.get("sid") or "default"
+    sid = "default"
+    if task:
+        sid = task.get("_sid", "default")
+    else:
+        try:
+            sid = session.get("sid", "default")
+        except RuntimeError:
+            sid = "default"
     cookie_dir = os.path.join(DATA_DIR, "cookies")
     sc = os.path.join(cookie_dir, f"{sid}.txt")
     gc = os.path.join(DATA_DIR, "cookies.txt")
@@ -196,7 +204,7 @@ def clean_title(title):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", ad_script=AD_SCRIPT)
 
 @app.route("/api/info", methods=["POST"])
 def api_info():
@@ -325,7 +333,7 @@ def do_download(tid, url, folder):
         "--skip-download", "--no-playlist",
         "-o", os.path.join(thumb_dir, "cover"),
         f"https://www.youtube.com/watch?v={first_vid}",
-    ], timeout=30)
+    ], timeout=30, task=t)
     if cover_code == 0:
         candidates = sorted(os.listdir(thumb_dir))
         jpgs = [f for f in candidates if f.lower().endswith((".jpg", ".jpeg"))]
@@ -418,13 +426,14 @@ def process_track(t, idx, raw_dir, alac_dir, cover_path):
         for attempt in range(3):
             code, _, err = run_ytdl([
                 "-x", "--audio-format", "flac",
-                "--sleep-requests", "1.5",
+                "--sleep-requests", SLEEP_REQUESTS,
                 "--extractor-retries", "1",
+                "--js-runtimes", "node",
                 "--sponsorblock-remove", "all",
                 "--no-playlist", "--no-embed-metadata",
                 "-o", out_template,
                 f"https://www.youtube.com/watch?v={vid}",
-            ], timeout=300)
+            ], timeout=300, task=t)
             if code == 0:
                 break
             last_err = err.strip()
@@ -543,6 +552,7 @@ def api_download():
         album_artist=artist_override or None,
         format=output_format,
         client_ip=request.remote_addr,
+        _sid=session.get("sid", "default"),
         tracks=songs, progress=(0, len(songs), ""),
         _dir=folder, _ts=time.time(),
     )
