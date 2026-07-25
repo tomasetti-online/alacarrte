@@ -12,7 +12,7 @@
       "128": "icon128.png"
     }
   },
-  "permissions": ["activeTab"],
+  "permissions": ["activeTab", "cookies"],
   "host_permissions": [
   "https://downloader.tomasetti.online/*",
   "https://www.youtube.com/*",

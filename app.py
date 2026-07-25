@@ -405,7 +405,7 @@ def do_download(tid, url, folder):
                     f = os.path.basename(tr["path"])
                     src = tr["path"]
                     dst = os.path.join(dest, f)
-                    if os.path.exists(dst): os.remove(dst)
+                    if os.path.exists(dst): continue
                     shutil.copy2(src, dst)
     except Exception:
         pass

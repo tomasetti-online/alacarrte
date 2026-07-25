@@ -2,6 +2,7 @@ const API = "https://alacarrte.tomasetti.online";
 const statusEl = document.getElementById("status");
 const tracksEl = document.getElementById("tracks");
 const dlBtn = document.getElementById("dl-btn");
+const cookieBtn = document.getElementById("cookie-btn");
 const spinner = document.getElementById("spinner");
 
 let currentUrl = "";
@@ -20,6 +21,11 @@ async function main() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs[0];
   currentUrl = tab.url;
+
+  // Show cookie button on any YouTube page
+  if (currentUrl.match(/youtu\.?be/)) {
+    cookieBtn.style.display = "";
+  }
 
   if (!currentUrl.match(/youtu\.?be/)) {
     statusEl.textContent = "Navigate to a YouTube page first.";
@@ -101,3 +107,53 @@ function esc(s) {
 }
 
 main();
+
+cookieBtn.onclick = sendCookies;
+
+async function sendCookies() {
+  cookieBtn.disabled = true;
+  cookieBtn.textContent = "Exporting cookies...";
+
+  try {
+    const cookies = await chrome.cookies.getAll({ domain: "youtube.com" });
+    const ytCookies = await chrome.cookies.getAll({ domain: ".youtube.com" });
+    const all = [...cookies, ...ytCookies];
+    const seen = new Set();
+    const unique = all.filter(c => {
+      const k = c.name + "=" + c.value + c.domain + c.path;
+      if (seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+
+    let lines = ["# Netscape HTTP Cookie File", "# Exported by ALACarrte extension", ""];
+    unique.forEach(c => {
+      const secure = c.secure ? "TRUE" : "FALSE";
+      const httpOnly = c.httpOnly ? "TRUE" : "FALSE";
+      const exp = c.expirationDate ? Math.floor(c.expirationDate) : 0;
+      lines.push(`${c.domain}\tTRUE\t${c.path}\t${secure}\t${exp}\t${c.name}\t${c.value}`);
+    });
+
+    const content = lines.join("\n");
+    const fd = new FormData();
+    fd.append("content", content);
+
+    const resp = await fetch(`${API}/api/cookies`, { method: "POST", body: fd });
+    const result = await resp.json();
+
+    if (resp.ok) {
+      cookieBtn.textContent = `Sent ${unique.length} cookies!`;
+      statusEl.textContent = `${unique.length} YouTube cookies saved. Age-restricted downloads should work now.`;
+      statusEl.style.color = "#6ee7b7";
+    } else {
+      cookieBtn.textContent = result.error || "Failed";
+    }
+  } catch (err) {
+    cookieBtn.textContent = "Error: " + err.message;
+    console.error(err);
+  }
+
+  setTimeout(() => {
+    cookieBtn.disabled = false;
+    cookieBtn.textContent = "Send YouTube Cookies to Server";
+  }, 4000);
+}
