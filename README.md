@@ -1,5 +1,7 @@
 # ALACarrte
 
+> **BETA** — This software is in active development. Use at your own risk.
+
 Self-hosted YouTube to hi-fi audio downloader. Paste a YouTube video, playlist, or artist channel URL and get ALAC or FLAC files with MusicBrainz-enriched metadata, cover art, and SponsorBlock-cut audio.
 
 ## Features
@@ -47,6 +49,8 @@ docker compose up -d
 | ALACARTTE_GOTIFY_URL | (empty) | Gotify server URL for notifications |
 | ALACARTTE_GOTIFY_TOKEN | (empty) | Gotify app token |
 | ALACARTTE_HA_WEBHOOK | (empty) | Home Assistant webhook URL |
+| ALACARTTE_AD_SCRIPT | (empty) | Ad network embed script |
+| ALACARTTE_DATA | /data | Data directory for downloads |
 
 ## Cookies
 
@@ -57,6 +61,10 @@ yt-dlp --cookies-from-browser firefox --cookies cookies.txt
 `
 
 Then mount the file or upload via the Settings page.
+
+## Disclaimer
+
+ALACarrte is provided as-is, in BETA. You are solely responsible for the content you download and how you use it. Respect copyright laws and platform terms of service. This tool is for personal, non-commercial use. No warranty or liability is assumed.
 
 ## License
 
