@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALACarrte</title>
+<link rel="icon" type="image/png" href="/static/logo.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <img src="/static/logo.png" alt="">
+    <div>
+      <h1>ALACarrte</h1>
+      <p class="sub">YouTube → hi-fi audio (ALAC / FLAC) · <a href="/settings" style="color:#7c3aed">Cookies</a> · <a href="https://github.com/tjtomasetti/alacarrte" target="_blank" style="color:#7c3aed">Open Source</a></p>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="card-title">Paste a URL</div>
+    <form id="info-form">
+      <div class="input-row">
+        <input type="url" id="url" name="url" placeholder="YouTube video, playlist, or channel URL..." required autofocus>
+        <button type="submit" class="btn">Get Info</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="error" class="error hidden"></div>
+
+  <div id="info-panel" class="hidden"></div>
+
+  <div id="queue" class="queue-grid"></div>
+
+  <div id="all-done-bar" style="display:none;margin-bottom:24px">
+    <a href="/api/dl/zip-all" class="btn btn-block">Download All Zips</a>
+  </div>
+
+  <hr style="border:none;border-top:1px solid #1c1430;margin:48px 0 24px">
+
+  <div style="font-size:0.75rem;color:#5a4a7a;line-height:1.6;margin-bottom:24px">
+    <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Status:</strong> <span id="status-badge" style="color:#6ee7b7">● Online</span></p>
+    <p style="margin-bottom:8px"><strong style="color:#7a6aaa">Adding to your music library:</strong> Download the ZIP, unzip, then drag the .m4a or .flac files into your music player (iTunes, Music, Plexamp, VLC, etc.). Files are auto-tagged with artist, album, track number, and cover art.</p>
+    <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Clipboard:</strong> When you load this page, it checks your clipboard for a YouTube link so you don't have to paste manually. The clipboard is read once in your browser and never sent to our server unless you submit it.</p>
+    <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Privacy:</strong> Download URLs are processed in real-time and not permanently stored. No personal data, cookies, or tracking are collected. Logs are minimal and not shared.</p>
+    <p style="margin-bottom:4px"><strong style="color:#7a6aaa">Disclaimer:</strong> This tool converts publicly available YouTube content. You are responsible for the content you download and how you use it. Respect copyright and platform terms of service.</p>
+  </div>
+
+  <details id="ext-section">
+    <summary>Chrome Extension &nearr;</summary>
+    <div class="card" style="margin-top:12px">
+      <p style="margin-bottom:12px;color:#aaa4c0;font-size:0.9rem">One-click download from any YouTube page:</p>
+      <ol>
+        <li><a href="/static/ALACarrte-Chrome-Extension.zip" download style="color:#a78bfa">Download ALACarrte-Chrome-Extension.zip</a> and unzip it</li>
+        <li>Open Chrome to <code>chrome://extensions</code></li>
+        <li>Enable <strong>Developer mode</strong> (top-right toggle)</li>
+        <li>Click <strong>Load unpacked</strong> and select the unzipped folder</li>
+        <li>Pin the extension — click it on any YouTube page to download as ALAC</li>
+      </ol>
+    </div>
+  </details>
+</div>
+
+<script>
+const form = document.getElementById('info-form');
+const urlInput = document.getElementById('url');
+const errorDiv = document.getElementById('error');
+const infoPanel = document.getElementById('info-panel');
+const queue = document.getElementById('queue');
+
+const activeTasks = {}; // tid -> { el, tracks, interval }
+
+function isChannel(u) {
+  return /youtube\.com\/(@[^\/]+|channel\/[^\/]+|c\/[^\/]+)/.test(u) && !/\/watch\b/.test(u);
+}
+
+// Channel detection (legacy - no auto-paste here, moved to bottom)
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorDiv.classList.add('hidden');
+  const url = urlInput.value.trim();
+  if (!url) return;
+
+  infoPanel.innerHTML = `<div class="loading"><div class="spinner"></div><span>Fetching...</span></div>`;
+  infoPanel.classList.remove('hidden');
+  infoPanel.classList.add('fade-in');
+
+  const fd = new FormData();
+  fd.append('url', url);
+
+  try {
+    if (isChannel(url)) {
+      const resp = await fetch('/api/channel', { method: 'POST', body: fd });
+      const text = await resp.text();
+      const data = JSON.parse(text);
+      if (!resp.ok) { showError(data.error || 'Failed'); return; }
+      showChannel(url, data);
+    } else {
+      const resp = await fetch('/api/info', { method: 'POST', body: fd });
+      const text = await resp.text();
+      const data = JSON.parse(text);
+      if (!resp.ok) { showError(data.error || 'Failed'); return; }
+      showInfo(url, data);
+    }
+  } catch (err) { showError('Network error: ' + err.message); }
+});
+
+function showError(msg) {
+  infoPanel.classList.add('hidden');
+  errorDiv.textContent = msg;
+  errorDiv.classList.remove('hidden');
+}
+
+function showInfo(url, data) {
+  const isAlbum = data.playlist !== null;
+  const tracks = data.tracks;
+  const firstId = tracks[0] && tracks[0].id;
+
+  let html = `<div class="card fade-in">`;
+
+  if (isAlbum) {
+    html += `<div class="card-title">Album</div><h2>${escHtml(data.playlist)}</h2>`;
+  }
+
+  if (firstId) {
+    html += `<img class="album-art" src="https://i.ytimg.com/vi/${firstId}/maxresdefault.jpg" alt="" onerror="this.style.display='none'">`;
+  }
+
+  html += `<p class="track-count"><span class="badge badge-purple">${tracks.length} track${tracks.length !== 1 ? 's' : ''}</span></p>`;
+
+  html += `<table><thead><tr><th>#</th><th>Artist</th><th>Title</th></tr></thead><tbody>`;
+  tracks.forEach((t, i) => {
+    html += `<tr><td>${i+1}</td><td>${escHtml(t.artist)}</td><td>${escHtml(t.title)}</td></tr>`;
+  });
+  html += `</tbody></table>`;
+
+  html += `<form id="dl-form">`;
+  html += `<input type="hidden" name="url" value="${escHtml(url)}">`;
+  html += `<div class="meta-fields">`;
+  html += `<label>Album: <input type="text" name="album" value="${escHtml(data.playlist || 'Download')}"></label>`;
+  if (tracks.length === 1 || allSameArtist(tracks)) {
+    html += `<label>Artist: <input type="text" name="artist" value="${escHtml(tracks[0].artist)}"></label>`;
+  } else {
+    html += `<label>Album Artist: <input type="text" name="artist" value="${escHtml(tracks[0].artist)}"></label>`;
+  }
+  html += `</div>`;
+  html += `<div class="option-row">`;
+  html += `<label><input type="radio" name="format" value="alac" checked> ALAC (Apple Lossless)</label>`;
+  html += `<label><input type="radio" name="format" value="flac"> FLAC (no conversion)</label>`;
+  html += `</div>`;
+  html += `<button type="submit" class="btn btn-block">Download</button>`;
+  html += `</form></div>`;
+
+  infoPanel.innerHTML = html;
+
+  document.getElementById('dl-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const submitUrl = fd.get('url');
+    infoPanel.classList.add('hidden');
+    urlInput.value = '';
+    urlInput.focus();
+
+    try {
+      const resp = await fetch('/api/download', { method: 'POST', body: fd });
+      const d = await resp.json();
+      if (!resp.ok) { showError(d.error); return; }
+      addTask(d.tid, data, submitUrl);
+      queue.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) { showError('Network error: ' + err.message); }
+  });
+}
+
+function allSameArtist(tracks) {
+  if (!tracks.length) return true;
+  const a = tracks[0].artist;
+  return tracks.every(t => t.artist === a);
+}
+
+function showChannel(url, data) {
+  const releases = data.releases || [];
+  const artist = data.artist || '';
+  let html = '<div class="card fade-in">';
+  html += `<div class="card-title">Artist</div><h2>${escHtml(artist)}</h2>`;
+  html += `<p class="track-count"><span class="badge badge-purple">${releases.length} release${releases.length !== 1 ? 's' : ''}</span></p>`;
+
+  html += `<div style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap">`;
+  html += `<button class="btn btn-sm" onclick="selectAll()">Select All</button>`;
+  html += `<button class="btn btn-sm btn-outline" onclick="selectNone()">Select None</button>`;
+  html += `</div>`;
+
+  html += '<table><thead><tr><th>Sel</th><th>Release</th><th>Tracks</th></tr></thead><tbody>';
+  releases.forEach((r, i) => {
+    html += `<tr class="release-row" data-idx="${i}" style="cursor:pointer">`;
+    html += `<td><input type="checkbox" class="album-cb" data-id="${escHtml(r.id)}" data-title="${escHtml(r.title)}" checked onclick="event.stopPropagation()"></td>`;
+    html += `<td><span class="expand-icon" id="exp-icon-${i}">▶</span> ${escHtml(r.title)}</td>`;
+    html += `<td>${r.count}</td></tr>`;
+    html += `<tr id="exp-tracks-${i}" style="display:none"><td colspan="3"><div class="loading" id="exp-load-${i}"><div class="spinner"></div><span>Loading tracks...</span></div></td></tr>`;
+  });
+  html += '</tbody></table>';
+
+  html += `<button class="btn btn-block" onclick="downloadSelected()">Download Selected</button>`;
+  html += '</div>';
+  infoPanel.innerHTML = html;
+
+  // Attach expand handlers
+  document.querySelectorAll('.release-row').forEach(row => {
+    row.addEventListener('click', function() {
+      const i = this.dataset.idx;
+      toggleRelease(i, releases[i]);
+    });
+  });
+}
+
+async function toggleRelease(i, release) {
+  const row = document.getElementById('exp-tracks-' + i);
+  const icon = document.getElementById('exp-icon-' + i);
+  if (row.style.display !== 'none') {
+    row.style.display = 'none';
+    icon.textContent = '▶';
+    return;
+  }
+  row.style.display = '';
+  icon.textContent = '▼';
+  document.getElementById('exp-load-' + i).style.display = 'flex';
+
+  try {
+    const fd = new FormData();
+    fd.append('url', `https://www.youtube.com/playlist?list=${release.id}`);
+    const resp = await fetch('/api/info', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) { row.innerHTML = `<td colspan="3" style="color:#f77;padding:12px">${escHtml(data.error)}</td>`; return; }
+
+    let html = '<td colspan="3" style="padding:0"><table style="margin:0"><tbody>';
+    data.tracks.forEach((t, j) => {
+      html += `<tr><td style="padding:4px 12px;border:none;font-size:0.85rem;color:#aaa4c0">${j+1}.</td>`;
+      html += `<td style="padding:4px 8px;border:none;font-size:0.85rem;color:#a78bfa">${escHtml(t.artist)}</td>`;
+      html += `<td style="padding:4px 12px;border:none;font-size:0.85rem;color:#ddd8f0">${escHtml(t.title)}</td></tr>`;
+    });
+    html += '</tbody></table></td>';
+    row.innerHTML = html;
+  } catch (e) {
+    row.innerHTML = `<td colspan="3" style="color:#f77;padding:12px">${escHtml(e.message)}</td>`;
+  }
+}
+
+function selectAll() {
+  document.querySelectorAll('.album-cb').forEach(cb => cb.checked = true);
+}
+function selectNone() {
+  document.querySelectorAll('.album-cb').forEach(cb => cb.checked = false);
+}
+
+async function downloadSelected() {
+  const cbs = document.querySelectorAll('.album-cb:checked');
+  if (!cbs.length) return;
+
+  infoPanel.classList.add('hidden');
+  urlInput.value = ''; urlInput.focus();
+
+  for (const cb of cbs) {
+    const albumId = cb.dataset.id;
+    const albumTitle = cb.dataset.title;
+    const playlistUrl = `https://www.youtube.com/playlist?list=${albumId}`;
+
+    const card = document.createElement('div');
+    card.className = 'card fade-in';
+    card.id = 'task-' + albumId;
+    card.dataset.url = playlistUrl;
+    card.innerHTML = `<div class="card-title">${escHtml(albumTitle)}</div>
+      <div class="progress-bar"><div class="progress-fill" id="pf-${albumId}" style="width:0%"></div></div>
+      <p id="st-${albumId}" style="color:#7a6aaa;font-size:0.9rem">Queued...</p>
+      <div id="tl-${albumId}"></div>
+      <div id="done-${albumId}" style="display:none"></div>
+      <p id="err-${albumId}" class="error hidden" style="margin:8px 0 0"></p>`;
+    queue.prepend(card);
+
+    const fd = new FormData();
+    fd.append('url', playlistUrl);
+    try {
+      const resp = await fetch('/api/download', { method: 'POST', body: fd });
+      const d = await resp.json();
+      if (!resp.ok) {
+        document.getElementById('err-' + albumId).textContent = d.error || 'Failed';
+        document.getElementById('err-' + albumId).classList.remove('hidden');
+        continue;
+      }
+      activeTasks[d.tid] = card;
+      card.id = 'task-' + d.tid;
+      card.dataset.url = playlistUrl;
+      document.getElementById('pf-' + albumId).id = 'pf-' + d.tid;
+      document.getElementById('st-' + albumId).id = 'st-' + d.tid;
+      document.getElementById('tl-' + albumId).id = 'tl-' + d.tid;
+      document.getElementById('done-' + albumId).id = 'done-' + d.tid;
+      document.getElementById('err-' + albumId).id = 'err-' + d.tid;
+      pollTask(d.tid);
+    } catch (e) {
+      const errEl = document.getElementById('err-' + albumId) || card.querySelector('[id^=err]');
+      if (errEl) { errEl.textContent = e.message; errEl.classList.remove('hidden'); }
+    }
+  }
+  queue.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function addTask(tid, info, url) {
+  const card = document.createElement('div');
+  card.className = 'card fade-in';
+  card.id = 'task-' + tid;
+  card.dataset.url = url;
+  card.innerHTML = `
+    <div class="card-title">${escHtml(info.playlist || 'Download')}</div>
+    <div class="progress-bar"><div class="progress-fill" id="pf-${tid}" style="width:0%"></div></div>
+    <p id="st-${tid}" style="color:#7a6aaa;font-size:0.9rem">Starting...</p>
+    <div id="tl-${tid}"></div>
+    <div id="done-${tid}" style="display:none"></div>
+    <div id="err-${tid}" class="error hidden" style="margin:8px 0 0"></div>
+  `;
+  queue.prepend(card);
+
+  activeTasks[tid] = { el: card, tracks: info.tracks, interval: null };
+  pollTask(tid);
+}
+
+async function pollTask(tid) {
+  try {
+    const resp = await fetch('/api/status/' + tid);
+    if (!resp.ok) {
+      if (resp.status === 404) {
+        showTaskError(tid, 'Task expired');
+        return;
+      }
+      throw new Error(await resp.text());
+    }
+    const data = await resp.json();
+
+    if (data.status === 'downloading') {
+      const [done, total, title] = data.progress;
+      const pct = total > 0 ? Math.round(done / total * 100) : 0;
+      document.getElementById('pf-' + tid).style.width = pct + '%';
+      document.getElementById('st-' + tid).textContent = title ? `Downloading ${done+1}/${total}: ${title}` : `${done}/${total}`;
+    } else if (data.status === 'done') {
+      document.getElementById('pf-' + tid).style.width = '100%';
+      document.getElementById('st-' + tid).textContent = 'Complete!';
+      showTaskDone(tid, data);
+      return;
+    }
+
+    renderTaskTracks(tid, data.tracks);
+    setTimeout(() => pollTask(tid), 1500);
+  } catch (err) {
+    showTaskError(tid, err.message);
+    setTimeout(() => pollTask(tid), 5000);
+  }
+}
+
+const trackQueuedTime = {};
+
+function renderTaskTracks(tid, tracks) {
+  let html = '<table><thead><tr><th>#</th><th>Track</th><th>Status</th></tr></thead><tbody>';
+  tracks.forEach((t, i) => {
+    if (!t.done && !t.error && !trackQueuedTime[tid + '-' + i]) {
+      trackQueuedTime[tid + '-' + i] = Date.now();
+    }
+    const elapsed = trackQueuedTime[tid + '-' + i] ? Math.floor((Date.now() - trackQueuedTime[tid + '-' + i]) / 1000) : 0;
+    const stuck = elapsed > 120;
+    const status = t.done ? '<span class="ok">Downloaded</span>' :
+                   t.error ? `<span class="err">${escHtml(t.error)}</span>` :
+                   stuck ? '<span class="err">Stuck</span>' :
+                   '<span class="pending">Queued</span>';
+    const retryBtn = (t.error || stuck) ? ` <button class="btn btn-sm btn-outline" onclick="retryTrack('${tid}', ${i}, event)" style="font-size:0.7rem;padding:2px 8px">Retry</button>` : '';
+    html += `<tr><td>${i+1}</td><td>${escHtml(t.artist !== 'Unknown Artist' ? t.artist + ' - ' : '')}${escHtml(t.title)}</td><td>${status}${retryBtn}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('tl-' + tid).innerHTML = html;
+}
+
+async function retryTrack(tid, idx, event) {
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '...';
+  trackQueuedTime[tid + '-' + idx] = Date.now();
+  try {
+    const r = await fetch('/api/retry-track/' + tid + '/' + idx, { method: 'POST' });
+    if (!r.ok) { btn.textContent = 'Failed'; return; }
+    btn.textContent = 'Retrying';
+    setTimeout(() => { btn.textContent = 'Queued'; btn.disabled = false; }, 2000);
+  } catch(e) {
+    btn.textContent = 'Error';
+  }
+}
+
+function showTaskDone(tid, data) {
+  let html = '<div class="done-actions">';
+  html += `<a href="/dl/${tid}/zip" class="btn">Download All as ZIP</a>`;
+  html += '</div>';
+
+  document.getElementById('done-' + tid).innerHTML = html;
+  document.getElementById('done-' + tid).style.display = '';
+  checkDoneCount();
+}
+
+function showTaskError(tid, msg) {
+  const el = document.getElementById('err-' + tid);
+  if (el) {
+    el.innerHTML = `${escHtml(msg)}<br><br>
+      <button class="btn btn-sm" onclick="retryTask('${tid}')">Retry Download</button>
+      <button class="btn btn-sm btn-outline" onclick="notifyAdmin('${tid}')" style="margin-left:8px">Notify Admin</button>`;
+    el.classList.remove('hidden');
+  }
+}
+
+function retryTask(tid) {
+  const card = document.getElementById('task-' + tid);
+  if (!card || !card.dataset.url) return;
+  const url = card.dataset.url;
+
+  // Re-submit the URL
+  urlInput.value = url;
+  infoPanel.innerHTML = `<div class="loading"><div class="spinner"></div><span>Retrying...</span></div>`;
+  infoPanel.classList.remove('hidden');
+  const fd = new FormData();
+  fd.append('url', url);
+
+  fetch('/api/info', { method: 'POST', body: fd }).then(r => r.json()).then(data => {
+    if (data.error) { showError(data.error); return; }
+    showInfo(url, data);
+    infoPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }).catch(e => showError('Failed: ' + e.message));
+}
+
+async function notifyAdmin(tid) {
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = 'Sending...';
+  const fd = new FormData();
+  fd.append('url', window.location.href);
+  fd.append('error', document.getElementById('err-' + tid).textContent.trim());
+  try {
+    const r = await fetch('/api/notify', { method: 'POST', body: fd });
+    const d = await r.json();
+    btn.textContent = 'Sent!';
+    setTimeout(() => btn.remove(), 2000);
+  } catch (e) {
+    btn.textContent = 'Failed';
+  }
+}
+
+async function checkDoneCount() {
+  try {
+    const r = await fetch('/api/count-done');
+    const d = await r.json();
+    document.getElementById('all-done-bar').style.display = d.count > 0 ? '' : 'none';
+  } catch(e) {}
+}
+
+// Check for completed tasks periodically
+setInterval(checkDoneCount, 5000);
+
+// Health check badge
+(async function healthPoll() {
+  try {
+    const r = await fetch('/api/health');
+    const d = await r.json();
+    const badge = document.getElementById('status-badge');
+    if (d.status === 'healthy') {
+      badge.innerHTML = '<span style="color:#6ee7b7">● Online</span>';
+    } else {
+      badge.innerHTML = `<span style="color:#fbbf24">● Busy (${d.active_downloads} active)</span>`;
+    }
+  } catch(e) {}
+  setTimeout(healthPoll, 15000);
+})();
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// Auto-paste after all handlers are registered
+(async function() {
+  let url = '';
+  const p = new URLSearchParams(window.location.search);
+  if (p.has('url')) {
+    url = p.get('url');
+  } else try { url = await navigator.clipboard.readText(); } catch(e) {}
+  if (url && /youtu\.?be/.test(url) && !document.querySelector('.album-cb')) {
+    urlInput.value = url;
+    form.requestSubmit();
+  }
+})();
+
+</script>
+</body>
+</html>

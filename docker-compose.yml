@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  alacarrte:
+    build: .
+    image: alacarrte/alacarrte
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./cookies.txt:/cookies.txt:ro
+    environment:
+      - ALACARTTE_SECRET_KEY=change-this-to-a-random-string
+      - ALACARTTE_DATA=/data
+      - ALACARTTE_CONCURRENCY=6
+      - ALACARTTE_SLEEP_REQUESTS=1.5
+      - ALACARTTE_RATE_LIMIT=60
+      - ALACARTTE_DL_COOLDOWN=1
+      # Optional: notifications
+      # - ALACARTTE_GOTIFY_URL=https://gotify.example.com/message
+      # - ALACARTTE_GOTIFY_TOKEN=your-token
+      # - ALACARTTE_HA_WEBHOOK=https://ha.example.com/api/webhook/...
+      # Optional: Plex auto-send (only for admin IPs)
+      # - ALACARTTE_PLEX_DIR=/plex-music
+      # - ALACARTTE_ADMIN_IPS=10.0.0.1,192.168.1.100
+      # Optional: ads
+      # - ALACARTTE_AD_SCRIPT=<script>...</script>
+    restart: unless-stopped

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALACarrte - {{ album }}</title>
+<link rel="icon" type="image/png" href="/static/logo.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <img src="/static/logo.png" alt="">
+    <div>
+      <h1>ALACarrte</h1>
+      <p class="sub">{{ album }}</p>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <p id="status-text" style="color:#7a6aaa;font-size:0.9rem">Starting...</p>
+  </div>
+
+  <div class="card" id="track-card">
+    <div class="card-title">Tracks</div>
+    <div id="track-list"></div>
+  </div>
+
+  <div class="card" id="done-links" style="display:none">
+    <div class="card-title">Complete</div>
+    <div id="done-content"></div>
+  </div>
+
+  <p id="error-msg" class="error hidden"></p>
+</div>
+
+<script>
+const tid = '{{ tid }}';
+const total = {{ total }};
+const trackList = document.getElementById('track-list');
+const progressFill = document.getElementById('progress-fill');
+const statusText = document.getElementById('status-text');
+const doneLinks = document.getElementById('done-links');
+const doneContent = document.getElementById('done-content');
+const errorMsg = document.getElementById('error-msg');
+const trackQueuedTime = {};
+
+let tracks = [];
+
+async function poll() {
+  try {
+    const resp = await fetch('/api/status/' + tid);
+    if (!resp.ok) {
+      if (resp.status === 404) {     errorMsg.innerHTML = 'Task expired. <button class="btn btn-sm btn-outline" onclick="notifyAdmin(\'Task expired: ' + tid + '\')">Notify Admin</button>'; errorMsg.classList.remove('hidden'); return; }
+      throw new Error(await resp.text());
+    }
+    const text = await resp.text();
+    const data = JSON.parse(text);
+    tracks = data.tracks;
+
+    data.tracks.forEach((t, i) => {
+      if (!t.done && !t.error && !trackQueuedTime[tid + '-' + i]) {
+        trackQueuedTime[tid + '-' + i] = Date.now();
+      }
+    });
+
+    if (data.status === 'downloading') {
+      const [done, total_t, title] = data.progress;
+      const pct = total_t > 0 ? Math.round(done / total_t * 100) : 0;
+      progressFill.style.width = pct + '%';
+      statusText.textContent = title ? `Downloading ${done+1}/${total_t}: ${title}` : `${done}/${total_t}`;
+    } else if (data.status === 'done') {
+      progressFill.style.width = '100%';
+      statusText.textContent = 'Complete!';
+      showDone(data);
+      return;
+    }
+
+    renderTracks(data.tracks);
+    setTimeout(poll, 1500);
+  } catch (err) {
+    errorMsg.textContent = 'Connection error: ' + err.message;
+    errorMsg.classList.remove('hidden');
+    setTimeout(poll, 5000);
+  }
+}
+
+function renderTracks(tracks) {
+  let html = '<table><thead><tr><th>#</th><th>Track</th><th>Status</th></tr></thead><tbody>';
+  tracks.forEach((t, i) => {
+    const elapsed = trackQueuedTime && trackQueuedTime[tid + '-' + i] ? Math.floor((Date.now() - trackQueuedTime[tid + '-' + i]) / 1000) : 0;
+    const stuck = elapsed > 120;
+    const status = t.done ? '<span class="ok">Downloaded</span>' :
+                   t.error ? `<span class="err">${escHtml(t.error)}</span> <button class="btn btn-sm btn-outline notify-btn" data-error="${escHtml(t.error)}" style="font-size:0.75rem;padding:2px 8px">Notify</button>` :
+                   stuck ? '<span class="err">Stuck</span>' :
+                   '<span class="pending">Queued</span>';
+    const retryBtn = (t.error || stuck) ? ` <button class="btn btn-sm btn-outline" onclick="retryTrack('${tid}', ${i})" style="font-size:0.7rem;padding:2px 8px">Retry</button>` : '';
+    html += `<tr><td>${i+1}</td><td>${escHtml(t.artist !== 'Unknown Artist' ? t.artist + ' - ' : '')}${escHtml(t.title)}</td><td>${status}${retryBtn}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  trackList.innerHTML = html;
+}
+
+function showDone(data) {
+  let html = '<div class="done-actions">';
+  html += `<a href="/dl/${tid}/zip" class="btn">Download All as ZIP</a>`;
+  html += '</div>';
+
+  doneContent.innerHTML = html;
+  doneLinks.style.display = '';
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function notifyAdmin(msg) {
+  const fd = new FormData();
+  fd.append('url', window.location.href);
+  fd.append('error', msg.replace(/<[^>]*>/g, ''));
+  try {
+    await fetch('/api/notify', { method: 'POST', body: fd });
+    alert('Admin notified!');
+  } catch (e) {
+    alert('Failed to send notification');
+  }
+}
+
+async function retryTrack(tid, idx) {
+  try {
+    const r = await fetch('/api/retry-track/' + tid + '/' + idx, { method: 'POST' });
+  } catch(e) {}
+}
+
+// Add notify buttons to error cells
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('notify-btn')) {
+    notifyAdmin(e.target.dataset.error);
+  }
+});
+
+poll();
+</script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALACarrte - Settings</title>
+<link rel="icon" type="image/png" href="/static/logo.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <img src="/static/logo.png" alt="">
+    <div>
+      <h1>ALACarrte</h1>
+      <p class="sub"><a href="/" style="color:#7c3aed">&larr; Back</a></p>
+    </div>
+  </header>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title">YouTube Cookies</div>
+    <p style="color:#aaa4c0;font-size:0.9rem;margin-bottom:12px">
+      Cookies let you download age-restricted content and YouTube Music Premium tracks. 
+      Export them from your browser first.
+    </p>
+
+    <div id="cookie-status" style="margin-bottom:12px">
+      <div class="loading hidden" id="cookie-loading"><div class="spinner"></div><span>Checking...</span></div>
+    </div>
+
+    <div style="margin-bottom:12px">
+      <label style="display:block;font-size:0.85rem;color:#7a6aaa;margin-bottom:4px">Paste cookies from clipboard:</label>
+      <textarea id="cookie-text" rows="6" style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid #2a1f4a;background:#1a1230;color:#ddd8f0;font-size:0.85rem;font-family:monospace;outline:none" placeholder="# Netscape HTTP Cookie File&#10;paste cookies here..."></textarea>
+      <button class="btn btn-sm" onclick="saveCookieText()" style="margin-top:8px">Save Cookies</button>
+    </div>
+
+    <div style="margin-bottom:12px">
+      <label style="display:block;font-size:0.85rem;color:#7a6aaa;margin-bottom:4px">Or upload a cookies.txt file:</label>
+      <input type="file" id="cookie-file" accept=".txt" style="color:#aaa4c0;font-size:0.85rem">
+      <button class="btn btn-sm" onclick="uploadCookieFile()" style="margin-top:8px">Upload Cookies</button>
+    </div>
+
+    <hr style="border:none;border-top:1px solid #1c1430;margin:16px 0">
+    <p style="color:#5a4a7a;font-size:0.8rem;margin-bottom:12px">
+      <strong>How to export cookies:</strong><br>
+      Install <a href="https:// addons.mozilla.org/firefox/addon/cookies-txt/" target="_blank" style="color:#7c3aed">cookies.txt</a> extension in Firefox, log into YouTube, click the extension icon, and export. 
+      Or use yt-dlp: <code style="background:#1a1230;padding:1px 5px;border-radius:3px">yt-dlp --cookies-from-browser firefox --cookies cookies.txt</code>
+    </p>
+    <button class="btn btn-sm btn-outline" onclick="deleteCookies()" style="color:#f77;border-color:#5a1a2a">Delete My Cookies</button>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title">About ALACarrte</div>
+    <p style="color:#aaa4c0;font-size:0.9rem">
+      ALACarrte is open source software. 
+      <a href="https://github.com/tjtomasetti/alacarrte" target="_blank" style="color:#7c3aed">Fork it on GitHub</a>, 
+      self-host on your own machine, or contribute to the project.
+    </p>
+  </div>
+</div>
+
+<script>
+async function checkCookies() {
+  const status = document.getElementById('cookie-status');
+  document.getElementById('cookie-loading').classList.remove('hidden');
+  try {
+    const r = await fetch('/api/cookies');
+    const d = await r.json();
+    document.getElementById('cookie-loading').classList.add('hidden');
+    if (d.exists) {
+      status.innerHTML = `<span style="color:#6ee7b7;font-size:0.9rem">&#10003; Cookies saved (${(d.size/1024).toFixed(1)} KB)</span>`;
+    } else {
+      status.innerHTML = `<span style="color:#fbbf24;font-size:0.9rem">No cookies saved yet</span>`;
+    }
+  } catch(e) {
+    document.getElementById('cookie-loading').classList.add('hidden');
+    status.innerHTML = `<span style="color:#f77;font-size:0.9rem">Error checking cookies</span>`;
+  }
+}
+
+async function saveCookieText() {
+  const text = document.getElementById('cookie-text').value.trim();
+  if (!text) return;
+  const btn = event.target; btn.disabled = true; btn.textContent = 'Saving...';
+  const fd = new FormData();
+  fd.append('content', text);
+  try {
+    const r = await fetch('/api/cookies', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (r.ok) { btn.textContent = 'Saved!'; checkCookies(); }
+    else { btn.textContent = d.error || 'Failed'; }
+  } catch(e) { btn.textContent = 'Error'; }
+  setTimeout(() => { btn.disabled = false; btn.textContent = 'Save Cookies'; }, 3000);
+}
+
+async function uploadCookieFile() {
+  const file = document.getElementById('cookie-file').files[0];
+  if (!file) return;
+  const btn = event.target; btn.disabled = true; btn.textContent = 'Uploading...';
+  const text = await file.text();
+  const fd = new FormData();
+  fd.append('content', text);
+  try {
+    const r = await fetch('/api/cookies', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (r.ok) { btn.textContent = 'Uploaded!'; checkCookies(); }
+    else { btn.textContent = d.error || 'Failed'; }
+  } catch(e) { btn.textContent = 'Error'; }
+  setTimeout(() => { btn.disabled = false; btn.textContent = 'Upload Cookies'; }, 3000);
+}
+
+async function deleteCookies() {
+  if (!confirm('Delete your saved cookies?')) return;
+  const r = await fetch('/api/cookies', { method: 'DELETE' });
+  checkCookies();
+}
+
+checkCookies();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "ALACarrte",
+  "version": "1.0",
+  "description": "Download YouTube audio as hi-fi ALAC/FLAC files via ALACarrte",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ALAC Downloader",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "permissions": ["activeTab"],
+  "host_permissions": [
+  "https://downloader.tomasetti.online/*",
+  "https://www.youtube.com/*",
+  "https://music.youtube.com/*",
+  "https://youtu.be/*"
+],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
