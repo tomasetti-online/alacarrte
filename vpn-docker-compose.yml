@@ -1,0 +1,20 @@
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "18888:8888"
+    volumes:
+      - ./gluetun-data:/gluetun
+    environment:
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=  # SET YOUR PROTONVPN OPENVPN USERNAME
+      - OPENVPN_PASSWORD=  # SET YOUR PROTONVPN PASSWORD
+      - SERVER_REGIONS=
+      - HTTPPROXY=on
+      - HTTPPROXY_PORT=8888
+      - HTTPPROXY_LOG=off

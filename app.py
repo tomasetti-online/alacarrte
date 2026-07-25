@@ -1,4 +1,4 @@
-import os, json, uuid, threading, shutil, zipfile, time, subprocess, re, signal, urllib.request, urllib.parse
+import os, json, uuid, threading, shutil, zipfile, time, subprocess, re, signal, urllib.request, urllib.parse, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, abort, session
@@ -20,6 +20,8 @@ SLEEP_REQUESTS = os.environ.get("ALACARTTE_SLEEP_REQUESTS", "3.0")
 RATE_LIMIT = int(os.environ.get("ALACARTTE_RATE_LIMIT", "60"))
 DL_COOLDOWN = int(os.environ.get("ALACARTTE_DL_COOLDOWN", "1"))
 AD_SCRIPT = os.environ.get("ALACARTTE_AD_SCRIPT", "")
+VPN_PROXY = os.environ.get("ALACARTTE_VPN_PROXY", "")  # e.g. http://10.0.0.3:18888
+VPN_CONTROL = os.environ.get("ALACARTTE_VPN_CONTROL", "")  # script path or API URL
 
 tasks = {}
 LOCK = threading.Lock()
@@ -60,7 +62,12 @@ def run_ytdl(args, timeout=180, task=None):
         cmd = cmd[:1] + ["--cookies", sc] + cmd[1:]
     elif os.path.exists(gc):
         cmd = cmd[:1] + ["--cookies", gc] + cmd[1:]
+    if VPN_PROXY and _RATE_LIMITED:
+        cmd = cmd[:1] + ["--proxy", VPN_PROXY] + cmd[1:]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    # Check for rate limiting in output and trigger VPN switch
+    if VPN_PROXY and (r.returncode != 0) and ("rate-limited" in r.stderr.lower() or "429" in r.stderr or "too many requests" in r.stderr.lower()):
+        threading.Thread(target=vpn_reconnect, daemon=True).start()
     return r.returncode, r.stdout, r.stderr
 
 _MB_LAST = 0
@@ -733,6 +740,31 @@ def api_notify():
             results["ha"] = str(e)
 
     return jsonify(results=results)
+
+_RATE_LIMITED = False
+
+def vpn_reconnect():
+    """Try to switch VPN server when rate-limited. Runs in background thread."""
+    global _RATE_LIMITED
+    _RATE_LIMITED = True
+    if not VPN_CONTROL:
+        return
+    try:
+        subprocess.run(VPN_CONTROL.split(), timeout=30, capture_output=True)
+    except Exception:
+        pass
+    _RATE_LIMITED = False
+
+@app.route("/api/vpn/switch", methods=["POST"])
+def api_vpn_switch():
+    if not VPN_CONTROL:
+        return jsonify(error="VPN not configured"), 400
+    threading.Thread(target=vpn_reconnect, daemon=True).start()
+    return jsonify(status="switching")
+
+@app.route("/api/vpn/status")
+def api_vpn_status():
+    return jsonify(rate_limited=_RATE_LIMITED, proxy=bool(VPN_PROXY), control=bool(VPN_CONTROL))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=False)
