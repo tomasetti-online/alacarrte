@@ -13,7 +13,7 @@ services:
       - ALACARTTE_ADMIN_IPS=10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5,10.0.0.7,127.0.0.1
       - ALACARTTE_PLEX_DIR=/plex-music
       - ALACARTTE_GOTIFY_URL=https://gotify.tomasetti.online/message
-      - ALACARTTE_GOTIFY_TOKEN=<GOTIFY-TOKEN-SCRUBBED>
+      - ALACARTTE_GOTIFY_TOKEN=ROTATE-AND-PASTE-NEW-TOKEN
       - ALACARTTE_HA_WEBHOOK=https://ha.tomasetti.online/api/webhook/tomasetti_uptime_iphone
       - ALACARTTE_CONCURRENCY=6
       - ALACARTTE_SLEEP_REQUESTS=1.5

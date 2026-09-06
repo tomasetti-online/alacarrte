@@ -3,7 +3,7 @@
 **Status: feature-complete BETA, already live.** macpro :3080 (gated `alacarrte.tomasetti.online` via portal-gate), wired into the lab: Lidarr YouTube miss-path (`scripts/lidarr-youtube-fallback.ps1`), Plex auto-send to `F:\Media\Music`, Gotify + HA notifications. This clone (`apps/alacarrte`, vault-adjacent working copy) is now the finish-up surface. Vault decision 2026-09-06: **BUILD, not kill** (resolves the old "unclear-alacarrte-and-clean-sites-data-products-json-tj" todo).
 
 ## Priority 1 — Security (do first)
-- **Live Gotify token committed in `docker-compose.macpro.yml`** (`ALACARTTE_GOTIFY_TOKEN=real value`) — and this repo is on public GitHub, so treat it as exposed. **Rotate the token in Gotify**, update the live container env, THEN scrub the file to a placeholder. Rotation makes git history harmless; no rewrite needed.
+- **Live Gotify token committed in `docker-compose.macpro.yml`** (`ALACARTTE_GOTIFY_TOKEN=real value`) — and this repo is on public GitHub, so treat it as exposed. **Rotate the token in Gotify**, update the live container env, THEN scrub the file to a placeholder. (Repo copy scrubbed 2026-09-06; live macpro compose unaffected — it carries its own env. ROTATION STILL PENDING.) Rotation makes git history harmless; no rewrite needed.
 
 ## Priority 2 — Real bugs
 - **Zombie retry:** `/api/retry-track/<tid>/<idx>` spawns a second `process_track` without checking task status — retrying inside a still-"downloading" task double-counts GLOBAL_SLOTS and can wedge the queue. Gate retry to `done`/`error` tasks (or per-track done flags).
