@@ -80,7 +80,7 @@ def search_musicbrainz(artist, title):
         time.sleep(1.2 - (now - _MB_LAST))
     query = urllib.parse.quote(f'artist:"{artist}" AND recording:"{title}"')
     url = f"https://musicbrainz.org/ws/2/recording/?query={query}&fmt=json&limit=5"
-    req = urllib.request.Request(url, headers={"User-Agent": "ALACarrte/1.0 ( github.com/tjtomasetti/alacarrte )"})
+    req = urllib.request.Request(url, headers={"User-Agent": "ALACarrte/1.0 ( github.com/tomasetti-online/alacarrte )"})
     try:
         resp = urllib.request.urlopen(req, timeout=10)
         data = json.loads(resp.read())
@@ -689,13 +689,23 @@ def health():
 
 @app.route("/api/retry-track/<tid>/<int:idx>", methods=["POST"])
 def api_retry_track(tid, idx):
-    t = tasks.get(tid)
-    if not t or idx >= len(t.get("tracks", [])):
-        abort(404)
-    track = t["tracks"][idx]
-    track["done"] = False
-    track["error"] = None
-    track["path"] = None
+    # Gate (2026-09-06): only finished tasks with a FAILED track may retry.
+    # Retrying an in-flight task/track used to spawn a second process_track
+    # for the same output files and double-consume a GLOBAL_SLOTS slot,
+    # wedging the queue. Check + clear happen under LOCK so a double-click
+    # cannot slip two workers past the gate.
+    with LOCK:
+        t = tasks.get(tid)
+        if not t or idx >= len(t.get("tracks", [])):
+            abort(404)
+        if t.get("status") not in ("done", "error"):
+            return jsonify(error="Task is still processing"), 409
+        track = t["tracks"][idx]
+        if track.get("done") or not track.get("error"):
+            return jsonify(error="Track is not in a failed state"), 409
+        track["done"] = False
+        track["error"] = None
+        track["path"] = None
     raw_dir = os.path.join(t["_dir"], "raw")
     alac_dir = os.path.join(t["_dir"], "alac")
     os.makedirs(raw_dir, exist_ok=True)
