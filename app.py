@@ -56,6 +56,42 @@ def save_library(entries):
 def library_tids():
     return {e.get("tid") for e in load_library()}
 
+
+def _norm_key(s):
+    return (s or "").strip().lower()
+
+
+def find_library_duplicates(tracks):
+    """Check incoming tracks against the persisted library.
+
+    Prefers a MusicBrainz recording id match when both sides carry it,
+    otherwise falls back to (artist, title). Returns a list of
+    {index, title, artist, match} for tracks already in the library.
+    """
+    lib = load_library()
+    by_id = set()
+    by_ta = set()
+    for e in lib:
+        for tr in e.get("tracks", []):
+            if tr.get("mb_id"):
+                by_id.add(tr["mb_id"])
+            key = (_norm_key(tr.get("artist")), _norm_key(tr.get("title")))
+            if key[1]:
+                by_ta.add(key)
+
+    dups = []
+    for i, tr in enumerate(tracks):
+        mb = tr.get("mb_id")
+        if mb and mb in by_id:
+            dups.append(dict(index=i, title=tr.get("title"),
+                             artist=tr.get("artist"), match="recording"))
+            continue
+        key = (_norm_key(tr.get("artist")), _norm_key(tr.get("title")))
+        if key in by_ta:
+            dups.append(dict(index=i, title=tr.get("title"),
+                             artist=tr.get("artist"), match="title+artist"))
+    return dups
+
 def bg_cleanup():
     while True:
         time.sleep(CLEANUP_INTERVAL)
@@ -148,7 +184,7 @@ def search_musicbrainz(artist, title):
 
             return dict(album=album, year=year,
                         track=track_num, total=total_tracks,
-                        source="MusicBrainz")
+                        source="MusicBrainz", id=rec.get("id"))
     return None
 
 def slugify(s):
@@ -281,7 +317,8 @@ def api_info():
             uploader=uploader,
         ))
 
-    return jsonify(playlist=playlist_title, tracks=songs)
+    return jsonify(playlist=playlist_title, tracks=songs,
+                   duplicates=find_library_duplicates(songs))
 
 def is_channel_url(url):
     # Strip trailing /playlists, /videos, /releases, /shorts
@@ -437,11 +474,32 @@ def do_download(tid, url, folder):
     try:
         lib = load_library()
         lib = [e for e in lib if e.get("tid") != tid]
+        if t.get("_replace"):
+            # A Replace proceeded: drop prior library entries whose tracks
+            # collide with this job, so the library doesn't accumulate dupes.
+            keep = []
+            for e in lib:
+                collide = False
+                for tr in e.get("tracks", []):
+                    for done_tr in t["tracks"]:
+                        if not done_tr.get("done"):
+                            continue
+                        if tr.get("mb_id") and done_tr.get("mb_id") and                            tr["mb_id"] == done_tr["mb_id"]:
+                            collide = True
+                            break
+                        if (_norm_key(tr.get("artist")), _norm_key(tr.get("title"))) ==                            (_norm_key(done_tr.get("artist")), _norm_key(done_tr.get("title"))):
+                            collide = True
+                            break
+                    if collide:
+                        break
+                if not collide:
+                    keep.append(e)
+            lib = keep
         entry = dict(
             tid=tid, album=t["album"], format=t.get("format", "alac"),
             timestamp=t["_ts"],
             tracks=[dict(title=tr.get("title"), artist=tr.get("artist"),
-                         year=tr.get("year", ""),
+                         year=tr.get("year", ""), mb_id=tr.get("mb_id"),
                          file=os.path.basename(tr["path"]) if tr.get("path") else None)
                     for tr in t["tracks"] if tr.get("done")],
             total=len(t["tracks"]),
@@ -527,6 +585,7 @@ def process_track(t, idx, raw_dir, alac_dir, cover_path):
             if mb.get("year"): track["year"] = mb["year"]
             if mb.get("track"): track["mb_track"] = mb["track"]
             if mb.get("total"): track["mb_total"] = mb["total"]
+            if mb.get("id"): track["mb_id"] = mb["id"]
 
         year = track.get("year", "")
         mb_track = track.get("mb_track", idx+1)
@@ -577,6 +636,7 @@ def api_download():
     album_override = request.form.get("album", "").strip()
     artist_override = request.form.get("artist", "").strip()
     output_format = request.form.get("format", "alac").strip()
+    replace = request.form.get("replace", "") == "1"
 
     code, out, err = run_ytdl(["--dump-single-json", "--flat-playlist", url])
     if code != 0:
@@ -615,6 +675,13 @@ def api_download():
             uploader=uploader, done=False,
         ))
 
+    # Pre-flight dedup gate: if these tracks are already in the library and
+    # the user didn't ask to Replace, refuse before starting a new job.
+    dups = find_library_duplicates(songs)
+    if dups and not replace:
+        return jsonify(error="Track(s) already in your library",
+                       duplicates=dups), 409
+
     t = dict(
         tid=tid, status="info", album=album,
         album_artist=artist_override or None,
@@ -622,7 +689,7 @@ def api_download():
         client_ip=request.remote_addr,
         _sid=session.get("sid", "default"),
         tracks=songs, progress=(0, len(songs), ""),
-        _dir=folder, _ts=time.time(),
+        _dir=folder, _ts=time.time(), _replace=replace,
     )
     tasks[tid] = t
     threading.Thread(target=do_download, args=(tid, url, folder), daemon=True).start()

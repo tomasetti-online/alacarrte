@@ -158,10 +158,35 @@ function showInfo(url, data) {
   html += `<label><input type="radio" name="format" value="alac" checked> ALAC (Apple Lossless)</label>`;
   html += `<label><input type="radio" name="format" value="flac"> FLAC (no conversion)</label>`;
   html += `</div>`;
+  html += `<div id="dup-warn" class="hidden"></div>`;
+  html += `<input type="hidden" name="replace" value="0">`;
   html += `<button type="submit" class="btn btn-block">Download</button>`;
   html += `</form></div>`;
 
   infoPanel.innerHTML = html;
+
+  // Surface already-in-library matches with a Skip / Replace choice.
+  const dups = data.duplicates || [];
+  if (dups.length) {
+    const warn = document.getElementById('dup-warn');
+    warn.classList.remove('hidden');
+    warn.innerHTML = `<div class="card" style="border:1px solid #fbbf24;background:#1a1230;padding:12px;margin-bottom:12px">
+      <div style="font-weight:600;color:#fbbf24">${dups.length} track(s) already in your library</div>
+      <div style="color:#aaa;font-size:0.85rem;margin:6px 0">${dups.map(d => escHtml(d.artist + ' - ' + d.title)).join(', ')}</div>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn btn-outline" id="dup-skip">Skip (keep existing)</button>
+        <button type="button" class="btn" id="dup-replace">Replace &amp; re-download</button>
+      </div>
+    </div>`;
+    document.getElementById('dup-skip').onclick = () => {
+      infoPanel.classList.add('hidden');
+      urlInput.value = ''; urlInput.focus();
+    };
+    document.getElementById('dup-replace').onclick = () => {
+      document.getElementById('dl-form').querySelector('[name="replace"]').value = '1';
+      document.getElementById('dl-form').requestSubmit();
+    };
+  }
 
   document.getElementById('dl-form').addEventListener('submit', async (e) => {
     e.preventDefault();
