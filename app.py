@@ -92,6 +92,72 @@ def find_library_duplicates(tracks):
                              artist=tr.get("artist"), match="title+artist"))
     return dups
 
+
+def _record_library(t):
+    """Write (or update) the persisted library entry for a finished task.
+
+    Used by do_download on completion and by Retry Failed after re-running.
+    Reuses any already-copied cover so a re-run doesn't orphan the artwork.
+    """
+    tid = t["tid"]
+    cover_path = t.get("_cover")
+    try:
+        lib = load_library()
+        lib = [e for e in lib if e.get("tid") != tid]
+        if t.get("_replace"):
+            keep = []
+            for e in lib:
+                collide = False
+                for tr in e.get("tracks", []):
+                    for done_tr in t["tracks"]:
+                        if not done_tr.get("done"):
+                            continue
+                        if tr.get("mb_id") and done_tr.get("mb_id") and                            tr["mb_id"] == done_tr["mb_id"]:
+                            collide = True
+                            break
+                        if (_norm_key(tr.get("artist")), _norm_key(tr.get("title"))) ==                            (_norm_key(done_tr.get("artist")), _norm_key(done_tr.get("title"))):
+                            collide = True
+                            break
+                    if collide:
+                        break
+                if not collide:
+                    keep.append(e)
+            lib = keep
+        entry = dict(
+            tid=tid, album=t["album"], format=t.get("format", "alac"),
+            timestamp=t.get("_ts", time.time()),
+            tracks=[dict(title=tr.get("title"), artist=tr.get("artist"),
+                         year=tr.get("year", ""), mb_id=tr.get("mb_id"),
+                         file=os.path.basename(tr["path"]) if tr.get("path") else None)
+                    for tr in t["tracks"] if tr.get("done")],
+            total=len(t["tracks"]),
+            failed=sum(1 for tr in t["tracks"] if tr.get("error")),
+        )
+        if cover_path and os.path.exists(cover_path):
+            lib_cover_dir = os.path.join(DATA_DIR, "_library_covers")
+            os.makedirs(lib_cover_dir, exist_ok=True)
+            lib_cover = os.path.join(lib_cover_dir, tid + ".jpg")
+            shutil.copy2(cover_path, lib_cover)
+            entry["cover"] = lib_cover
+        lib.insert(0, entry)
+        save_library(lib[:LIBRARY_CAP])
+    except Exception:
+        pass
+
+
+def _batch_summary(t):
+    """Compute the end-of-batch summary for a finished task."""
+    downloaded = sum(1 for tr in t.get("tracks", []) if tr.get("done"))
+    failed = sum(1 for tr in t.get("tracks", []) if tr.get("error"))
+    size = 0
+    for tr in t.get("tracks", []):
+        if tr.get("done") and tr.get("path") and os.path.exists(tr["path"]):
+            size += os.path.getsize(tr["path"])
+    start = t.get("_start") or t.get("_ts") or time.time()
+    duration = max(0, int(t.get("_ts", time.time()) - start))
+    return dict(downloaded=downloaded, failed=failed, total=len(t.get("tracks", [])),
+                size_bytes=size, duration_seconds=duration)
+
 def bg_cleanup():
     while True:
         time.sleep(CLEANUP_INTERVAL)
@@ -390,6 +456,7 @@ def api_channel():
 def do_download(tid, url, folder):
     t = tasks[tid]
     t["status"] = "downloading"
+    t["_start"] = time.time()
     raw_dir = os.path.join(folder, "raw")
     alac_dir = os.path.join(folder, "alac")
     os.makedirs(raw_dir, exist_ok=True)
@@ -414,6 +481,7 @@ def do_download(tid, url, folder):
         if jpgs:
             best = max(jpgs, key=lambda f: os.path.getsize(os.path.join(thumb_dir, f)))
             cover_path = os.path.join(thumb_dir, best)
+    t["_cover"] = cover_path
 
     done_count = [0]
     dl_lock = threading.Lock()
@@ -468,53 +536,9 @@ def do_download(tid, url, folder):
     t["status"] = "done"
     t["_ts"] = time.time()
 
-    # Record the completed job in the persisted library so it survives a
-    # reload/restart and is exempt from cleanup. Cover is copied out so it
-    # lives as long as the library entry.
-    try:
-        lib = load_library()
-        lib = [e for e in lib if e.get("tid") != tid]
-        if t.get("_replace"):
-            # A Replace proceeded: drop prior library entries whose tracks
-            # collide with this job, so the library doesn't accumulate dupes.
-            keep = []
-            for e in lib:
-                collide = False
-                for tr in e.get("tracks", []):
-                    for done_tr in t["tracks"]:
-                        if not done_tr.get("done"):
-                            continue
-                        if tr.get("mb_id") and done_tr.get("mb_id") and                            tr["mb_id"] == done_tr["mb_id"]:
-                            collide = True
-                            break
-                        if (_norm_key(tr.get("artist")), _norm_key(tr.get("title"))) ==                            (_norm_key(done_tr.get("artist")), _norm_key(done_tr.get("title"))):
-                            collide = True
-                            break
-                    if collide:
-                        break
-                if not collide:
-                    keep.append(e)
-            lib = keep
-        entry = dict(
-            tid=tid, album=t["album"], format=t.get("format", "alac"),
-            timestamp=t["_ts"],
-            tracks=[dict(title=tr.get("title"), artist=tr.get("artist"),
-                         year=tr.get("year", ""), mb_id=tr.get("mb_id"),
-                         file=os.path.basename(tr["path"]) if tr.get("path") else None)
-                    for tr in t["tracks"] if tr.get("done")],
-            total=len(t["tracks"]),
-            failed=sum(1 for tr in t["tracks"] if tr.get("error")),
-        )
-        if cover_path and os.path.exists(cover_path):
-            lib_cover_dir = os.path.join(DATA_DIR, "_library_covers")
-            os.makedirs(lib_cover_dir, exist_ok=True)
-            lib_cover = os.path.join(lib_cover_dir, tid + ".jpg")
-            shutil.copy2(cover_path, lib_cover)
-            entry["cover"] = lib_cover
-        lib.insert(0, entry)
-        save_library(lib[:LIBRARY_CAP])
-    except Exception:
-        pass
+    # Record the completed job in the persisted library (also used by Retry
+    # Failed after re-running, so the entry stays in sync).
+    _record_library(t)
 
     # Auto-send to Plex if available (only for admin IPs)
     try:
@@ -708,6 +732,7 @@ def api_status(tid):
                      file=os.path.basename(tr["path"]) if tr.get("path") else None)
                 for tr in t["tracks"]],
         progress=list(t["progress"]),
+        summary=_batch_summary(t) if t.get("status") in ("done", "error") else None,
     )
 
 @app.route("/api/library")
@@ -855,6 +880,65 @@ def api_retry_track(tid, idx):
     os.makedirs(alac_dir, exist_ok=True)
     threading.Thread(target=process_track, args=(t, idx, raw_dir, alac_dir, None), daemon=True).start()
     return jsonify(status="retrying")
+
+
+def _retry_failed_worker(t):
+    """Re-run every failed track of a finished batch, then finalize it.
+
+    Runs after the caller has reset the failed tracks under LOCK. Each track
+    is re-processed via process_track (which rebuilds its URL from track id),
+    successful tracks are left untouched, and once all reach a terminal state
+    the batch is marked done and its library entry is refreshed.
+    """
+    tid = t["tid"]
+    raw_dir = os.path.join(t["_dir"], "raw")
+    alac_dir = os.path.join(t["_dir"], "alac")
+    os.makedirs(raw_dir, exist_ok=True)
+    os.makedirs(alac_dir, exist_ok=True)
+    cover = t.get("_cover")
+
+    indices = [i for i, tr in enumerate(t["tracks"]) if not tr.get("done")]
+    threads = []
+    for i in indices:
+        th = threading.Thread(target=process_track,
+                              args=(t, i, raw_dir, alac_dir, cover), daemon=True)
+        th.start()
+        threads.append(th)
+    for th in threads:
+        th.join()
+
+    # Mark any that still aren't done as failed again so the batch terminates.
+    for i in indices:
+        if not t["tracks"][i].get("done") and not t["tracks"][i].get("error"):
+            t["tracks"][i]["error"] = "Retry failed to produce output"
+
+    t["progress"] = (len(t["tracks"]), len(t["tracks"]), "Done")
+    t["status"] = "done"
+    t["_ts"] = time.time()
+    _record_library(t)
+
+
+@app.route("/api/retry-failed/<tid>", methods=["POST"])
+def api_retry_failed(tid):
+    # One-click Retry Failed: re-run all failed tracks of a finished batch.
+    # Same gating as per-track retry so an in-flight task can't be retried.
+    with LOCK:
+        t = tasks.get(tid)
+        if not t:
+            abort(404)
+        if t.get("status") not in ("done", "error"):
+            return jsonify(error="Task is still processing"), 409
+        failed = [i for i, tr in enumerate(t["tracks"])
+                  if not tr.get("done") and tr.get("error")]
+        if not failed:
+            return jsonify(error="No failed tracks to retry"), 409
+        for i in failed:
+            t["tracks"][i]["done"] = False
+            t["tracks"][i]["error"] = None
+            t["tracks"][i]["path"] = None
+        t["status"] = "retrying"
+    threading.Thread(target=_retry_failed_worker, args=(t,), daemon=True).start()
+    return jsonify(status="retrying", retried=len(failed))
 
 @app.route("/api/notify", methods=["POST"])
 def api_notify():

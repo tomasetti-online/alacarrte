@@ -127,6 +127,9 @@ tr:last-child td { border-bottom: none; }
 .err { color: #f77; }
 .pending { color: #4a3a6a; }
 
+.summary-ok { color: #6ee7b7; font-weight: 600; font-size: 0.95rem; margin: 4px 0 12px; }
+.summary-fail { color: #aaa; font-size: 0.95rem; margin: 4px 0 4px; }
+.summary-fail .err { color: #f77; font-weight: 600; }
 .done-actions { display: flex; gap: 12px; margin: 20px 0; flex-wrap: wrap; }
 .done-actions .btn { text-decoration: none; }
 

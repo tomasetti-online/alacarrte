@@ -65,7 +65,7 @@ async function poll() {
       }
     });
 
-    if (data.status === 'downloading') {
+    if (data.status === 'downloading' || data.status === 'retrying') {
       const [done, total_t, title] = data.progress;
       const pct = total_t > 0 ? Math.round(done / total_t * 100) : 0;
       progressFill.style.width = pct + '%';
@@ -102,13 +102,54 @@ function renderTracks(tracks) {
   trackList.innerHTML = html;
 }
 
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(1) + ' ' + u[i];
+}
+function fmtDur(s) {
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return `${m}m ${r}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
 function showDone(data) {
-  let html = '<div class="done-actions">';
+  const sum = data.summary || { downloaded: 0, failed: 0, total: data.tracks.length, size_bytes: 0, duration_seconds: 0 };
+  let html = '';
+  if (sum.failed > 0) {
+    html += `<div class="summary-fail">${sum.downloaded} downloaded · <span class="err">${sum.failed} failed</span> · ${fmtBytes(sum.size_bytes)} · ${fmtDur(sum.duration_seconds)}</div>`;
+    html += `<div style="margin:8px 0 12px"><button class="btn" id="retry-failed-btn">Retry Failed (${sum.failed})</button></div>`;
+  } else {
+    html += `<div class="summary-ok">${sum.downloaded} downloaded · ${fmtBytes(sum.size_bytes)} · ${fmtDur(sum.duration_seconds)}</div>`;
+  }
+  html += '<div class="done-actions">';
   html += `<a href="/dl/${tid}/zip" class="btn">Download All as ZIP</a>`;
   html += '</div>';
 
   doneContent.innerHTML = html;
   doneLinks.style.display = '';
+  const rfb = document.getElementById('retry-failed-btn');
+  if (rfb) {
+    rfb.onclick = async () => {
+      rfb.disabled = true; rfb.textContent = 'Retrying...';
+      try {
+        await fetch('/api/retry-failed/' + tid, { method: 'POST' });
+        doneLinks.style.display = 'none';
+        statusText.textContent = 'Retrying failed tracks...';
+        poll();
+      } catch (e) {
+        rfb.disabled = false; rfb.textContent = 'Retry Failed';
+      }
+    };
+  }
+}
+
+async function retryFailed() {
+  await fetch('/api/retry-failed/' + tid, { method: 'POST' });
 }
 
 function escHtml(s) {
