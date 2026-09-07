@@ -21,10 +21,12 @@ Self-hosted YouTube to hi-fi audio downloader. Paste a YouTube video, playlist, 
 
 ## Quick Start
 
-### Docker
+### Docker (build from source — no published image)
 
 `ash
-docker run -d --restart always --name alacarrte -p 8080:8080 -v ./data:/data tomasetti-online/alacarrte
+git clone https://github.com/tomasetti-online/alacarrte.git && cd alacarrte
+docker build -t alacarrte .
+docker run -d --restart always --name alacarrte -p 8080:8080 -v ./data:/data alacarrte
 `
 
 ### Docker Compose
