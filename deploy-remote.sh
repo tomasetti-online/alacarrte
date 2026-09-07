@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# EXAMPLE remote deployment script (Tomasetti Tech lab: builds on macpro from a
+# checked-out clone at $REPO, then recreates the live compose at $LIVE). Adapt the
+# paths for your own host, or just use `docker compose up -d` from the repo.
+# Usage: deploy-remote.sh <expected-short-sha>
+#!/usr/bin/env bash
 # alacarrte remote deploy - runs on macpro.
 # Usage: deploy-remote.sh <expected-short-sha>
 # Pulls the repo clone to that commit, builds the image, recreates the

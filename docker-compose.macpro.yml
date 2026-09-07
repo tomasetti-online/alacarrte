@@ -1,3 +1,9 @@
+# EXAMPLE production deployment (the Tomasetti Tech lab's macpro setup).
+# Uses local builds (no published image), Plex auto-send, Gotify + Home Assistant
+# notifications, and a GLUTUN-backed proxy via ALACARTTE_VPN_PROXY. Adjust volumes,
+# IPs, ports and the ALACARTTE_GOTIFY_TOKEN for your own host. The base
+# docker-compose.yml is the supported, dependency-free quick start.
+
 services:
   alacarrte:
     image: alacarrte

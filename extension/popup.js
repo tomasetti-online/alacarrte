@@ -1,4 +1,3 @@
-const API = "https://alacarrte.tomasetti.online";
 const statusEl = document.getElementById("status");
 const tracksEl = document.getElementById("tracks");
 const dlBtn = document.getElementById("dl-btn");
@@ -6,6 +5,22 @@ const cookieBtn = document.getElementById("cookie-btn");
 const spinner = document.getElementById("spinner");
 
 let currentUrl = "";
+let API = null;
+
+// Resolve the ALACarrte instance URL (set in the options page) and make sure
+// this extension is allowed to reach it.
+async function initApi() {
+  if (API) return API;
+  const { apiUrl } = await chrome.storage.sync.get({ apiUrl: "http://localhost:8080" });
+  API = apiUrl.replace(/\/+$/, "");
+  const origin = new URL(API).origin;
+  const has = await chrome.permissions.contains({ origins: [origin + "/*"] });
+  if (!has) {
+    const granted = await chrome.permissions.request({ origins: [origin + "/*"] });
+    if (!granted) throw new Error("Permission to reach " + origin + " is required (set the URL in options)");
+  }
+  return API;
+}
 
 function isChannel(u) {
   return /youtube\.com\/(@[^\/]+|channel\/[^\/]+|c\/[^\/]+)/.test(u) && !/\/watch\b/.test(u);
@@ -32,13 +47,21 @@ async function main() {
     return;
   }
 
+  let api;
+  try {
+    api = await initApi();
+  } catch (err) {
+    statusEl.textContent = "Error: " + err.message;
+    return;
+  }
+
   statusEl.textContent = "Fetching...";
   const fd = new FormData();
   fd.append("url", currentUrl);
 
   try {
     if (isChannel(currentUrl)) {
-      const data = await jsonFetch(`${API}/api/channel`, fd);
+      const data = await jsonFetch(`${api}/api/channel`, fd);
       const releases = data.releases || [];
       statusEl.textContent = `${data.artist || data.channel} — ${releases.length} release(s)`;
       let html = "";
@@ -49,9 +72,9 @@ async function main() {
       tracksEl.innerHTML = html;
       dlBtn.style.display = "block";
       dlBtn.textContent = "Open in Downloader";
-      dlBtn.onclick = () => { window.open(`${API}/?url=${encodeURIComponent(currentUrl)}`, "_blank"); };
+      dlBtn.onclick = () => { window.open(`${api}/?url=${encodeURIComponent(currentUrl)}`, "_blank"); };
     } else {
-      const data = await jsonFetch(`${API}/api/info`, fd);
+      const data = await jsonFetch(`${api}/api/info`, fd);
       const isAlbum = data.playlist !== null;
       statusEl.textContent = isAlbum ? `${data.playlist} (${data.tracks.length} tracks)` : `${data.tracks.length} track(s)`;
 
@@ -80,6 +103,7 @@ async function main() {
 }
 
 async function startDownload(url) {
+  const api = await initApi();
   dlBtn.disabled = true;
   dlBtn.textContent = "Starting...";
   spinner.classList.remove("hidden");
@@ -88,8 +112,8 @@ async function startDownload(url) {
   fd.append("url", url);
 
   try {
-    const data = await jsonFetch(`${API}/api/download`, fd);
-    window.open(`${API}/?url=${encodeURIComponent(currentUrl)}`, "_blank");
+    const data = await jsonFetch(`${api}/api/download`, fd);
+    window.open(`${api}/?url=${encodeURIComponent(currentUrl)}`, "_blank");
     statusEl.textContent = "Download started! Check the tab.";
   } catch (err) {
     statusEl.textContent = "Error: " + err.message;
@@ -111,6 +135,7 @@ main();
 cookieBtn.onclick = sendCookies;
 
 async function sendCookies() {
+  const api = await initApi();
   cookieBtn.disabled = true;
   cookieBtn.textContent = "Exporting cookies...";
 
@@ -137,7 +162,7 @@ async function sendCookies() {
     const fd = new FormData();
     fd.append("content", content);
 
-    const resp = await fetch(`${API}/api/cookies`, { method: "POST", body: fd });
+    const resp = await fetch(`${api}/api/cookies`, { method: "POST", body: fd });
     const result = await resp.json();
 
     if (resp.ok) {

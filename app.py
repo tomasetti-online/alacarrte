@@ -20,7 +20,7 @@ SLEEP_REQUESTS = os.environ.get("ALACARTTE_SLEEP_REQUESTS", "3.0")
 RATE_LIMIT = int(os.environ.get("ALACARTTE_RATE_LIMIT", "60"))
 DL_COOLDOWN = int(os.environ.get("ALACARTTE_DL_COOLDOWN", "1"))
 AD_SCRIPT = os.environ.get("ALACARTTE_AD_SCRIPT", "")
-VPN_PROXY = os.environ.get("ALACARTTE_VPN_PROXY", "")  # e.g. http://10.0.0.3:18888
+VPN_PROXY = os.environ.get("ALACARTTE_VPN_PROXY", "")  # e.g. http://vpn-host:18888
 VPN_CONTROL = os.environ.get("ALACARTTE_VPN_CONTROL", "")  # script path or API URL
 
 tasks = {}
@@ -198,12 +198,14 @@ def clean_title(title):
     title = re.sub(r'(?i)\s*\(Official\s+Video\)', '', title)
     title = re.sub(r'(?i)\s*\(Official\s+Audio\)', '', title)
     title = re.sub(r'(?i)\s*\(Music\s+Video\)', '', title)
+    title = re.sub(r'(?i)\s*\(Official\s+Lyric[s]?\s+Video\)', '', title)
     title = re.sub(r'(?i)\s*\(Lyric[s]?\s+Video\)', '', title)
     title = re.sub(r'(?i)\s*\[Official\s+Music\s+Video\]', '', title)
     title = re.sub(r'(?i)\s*\[Official\s+Video\]', '', title)
+    title = re.sub(r'(?i)\s*\[Official\s+Audio\]', '', title)
     title = re.sub(r'(?i)\s*\[Video\]', '', title)
     title = re.sub(r'(?i)\s*\[Audio\]', '', title)
-    title = re.sub(r'(?i)\s*with\s+(lyrics|download)\s+link.*$', '', title)
+    title = re.sub(r'(?i)\s*with\s+(lyrics|download)(\s+(lyrics|download))?\s+link.*$', '', title)
     title = re.sub(r'(?i)\s*Official\s+Lyrics?\s*(Video)?$', '', title)
     title = re.sub(r'\s+', ' ', title).strip()
     title = re.sub(r'[\s\-\.\?,;:]+$', '', title).strip()

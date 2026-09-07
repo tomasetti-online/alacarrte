@@ -1,0 +1,6 @@
+# ALACarrte runtime dependencies (Python 3.9+)
+# gunicorn is intentionally NOT here: it only builds on Linux and is used by the
+# Dockerfile/deployment. Keeping it out lets `pip install -r requirements.txt`
+# work on Windows/macOS for local dev too.
+flask>=3.0
+yt-dlp>=2024.1.1
