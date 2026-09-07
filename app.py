@@ -373,22 +373,26 @@ def do_download(tid, url, folder):
             th.start()
             launched.append(th)
 
-    # Keep waiting until all tracks are actually done, with periodic checks
+    # Keep waiting until every track reaches a terminal state: done OR error.
+    # (An errored track never sets done, but it must still advance batch
+    # completion or a single dead track would hang the whole batch forever.)
     last_progress = time.time()
     last_done = 0
     while True:
         with dl_lock:
-            all_done = all(t["tracks"][i].get("done", False) for i in range(total))
-            current_done = sum(1 for i in range(total) if t["tracks"][i].get("done", False))
-        if all_done:
+            terminal = [t["tracks"][i].get("done") or t["tracks"][i].get("error")
+                        for i in range(total)]
+            all_terminal = all(terminal)
+            current_terminal = sum(1 for x in terminal if x)
+        if all_terminal:
             break
         # If no progress for 10 minutes, fail remaining tracks
-        if current_done > 0 and current_done == last_done:
+        if current_terminal > 0 and current_terminal == last_done:
             if time.time() - last_progress > 600:
                 break
         else:
             last_progress = time.time()
-            last_done = current_done
+            last_done = current_terminal
         time.sleep(5)
     # Mark any stuck tracks as failed
     for i in range(total):

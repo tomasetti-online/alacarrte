@@ -155,3 +155,56 @@ def test_clean_title_used_for_output_filename(pipeline, tmp_path):
     # The "(Official Video)" suffix must be stripped from the filename and metadata
     titles = [tr["title"] for tr in t["tracks"]]
     assert titles[0] == "First Song"
+
+
+def _batch_ytdl(ok_vid, fail_vid):
+    """yt-dlp that succeeds for ok_vid's download, fails for fail_vid's."""
+    def fake(args, timeout=180, task=None):
+        if "--write-thumbnail" in args:
+            o = args[args.index("-o") + 1]
+            os.makedirs(os.path.dirname(o), exist_ok=True)
+            with open(o + ".jpg", "w") as f:
+                f.write("cover")
+            return 0, "", ""
+        url = args[-1]
+        vid = url.split("watch?v=")[-1]
+        if vid == fail_vid:
+            return 1, "", "yt-dlp: unable to download video"
+        o = args[args.index("-o") + 1]
+        flac = o.replace("%(ext)s", "flac")
+        os.makedirs(os.path.dirname(flac), exist_ok=True)
+        with open(flac, "w") as f:
+            f.write("flacdata")
+        return 0, "", ""
+    return fake
+
+
+def test_batch_completes_when_a_track_errors(pipeline, monkeypatch):
+    """A batch with an errored track must terminate, not hang forever.
+
+    Regression for the do_download wait loop: it used to wait on `done`
+    only, so a track that errored (done never set) stalled the whole batch.
+    """
+    tid, t = _make_task(fmt="alac")
+    alacarrte.tasks[tid] = t
+    monkeypatch.setattr(alacarrte, "run_ytdl", _batch_ytdl(ok_vid="def456", fail_vid="abc123"))
+
+    # do_download would hang pre-fix; run it with a watchdog timeout so a
+    # regression fails fast instead of freezing the suite.
+    import threading as _th
+    result = {}
+    def run():
+        result["done"] = False
+        alacarrte.do_download(tid, "https://youtube.com/watch?v=abc123", t["_dir"])
+        result["done"] = True
+    th = _th.Thread(target=run, daemon=True)
+    th.start()
+    th.join(timeout=30)
+
+    assert result.get("done"), "do_download must return even when a track errors"
+    assert t["status"] == "done"
+
+    by_id = {tr["id"]: tr for tr in t["tracks"]}
+    assert "error" in by_id["abc123"], "the failed track must carry an error"
+    assert not by_id["abc123"].get("done"), "failed track must not be marked done"
+    assert by_id["def456"].get("done"), "the healthy track must still complete"
