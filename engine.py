@@ -129,6 +129,7 @@ def search_musicbrainz(artist, title):
 
 
 def bg_cleanup():
+    os.makedirs(config.DATA_DIR, exist_ok=True)
     while True:
         time.sleep(config.CLEANUP_INTERVAL)
         now = time.time()

@@ -7,7 +7,6 @@ os.environ. No logic lives here beyond turning env strings into typed values.
 import os
 
 DATA_DIR = os.environ.get("ALACARTTE_DATA", "/data")
-os.makedirs(DATA_DIR, exist_ok=True)
 
 GOTIFY_URL = os.environ.get("ALACARTTE_GOTIFY_URL", "")
 GOTIFY_TOKEN = os.environ.get("ALACARTTE_GOTIFY_TOKEN", "")
