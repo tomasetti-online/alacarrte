@@ -24,6 +24,16 @@ The extension defaults to `http://localhost:8080`. If your ALACarrte server live
 - On a **channel** page: lists the releases → **Open in Downloader** jumps to the web UI.
 - **Send YouTube Cookies to Server**: exports your logged-in YouTube cookies (Netscape format) to the server, enabling age-restricted or member-only downloads. Only runs when you click it.
 
+## Watch progress in the popup
+
+Once a download starts, the popup switches to a live status view and polls the
+server — no need to keep the status tab open. Each track shows its current
+state (Queued / Downloaded), and any **failed track is listed in red with its
+reason and a Retry button**. The view resumes automatically the next time you
+open the popup while the download is still running, even if the active tab
+isn't a YouTube page. Clicking **Download All as ALAC** still opens the full
+status tab if you want the richer page.
+
 ## Notes
 
 - The extension reads cookies for `youtube.com` only.

@@ -3,9 +3,15 @@ const tracksEl = document.getElementById("tracks");
 const dlBtn = document.getElementById("dl-btn");
 const cookieBtn = document.getElementById("cookie-btn");
 const spinner = document.getElementById("spinner");
+const statusView = document.getElementById("status-view");
+const svAlbum = document.getElementById("sv-album");
+const svProgress = document.getElementById("sv-progress");
+const svTracks = document.getElementById("sv-tracks");
 
 let currentUrl = "";
 let API = null;
+let pollTimer = null;
+let pollStopped = false;
 
 // Resolve the ALACarrte instance URL (set in the options page) and make sure
 // this extension is allowed to reach it.
@@ -32,6 +38,106 @@ async function jsonFetch(url, fd) {
   try { return JSON.parse(text); } catch(e) { throw new Error("Server error: empty response"); }
 }
 
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ---- Poll-to-status view ------------------------------------------------
+// Lets the user watch a running download (and its per-track errors) right in
+// the popup, without keeping the full status tab open.
+
+function showStatusView(tid, data) {
+  svTid = tid;
+  dlBtn.style.display = "none";
+  cookieBtn.style.display = "none";
+  statusView.classList.remove("hidden");
+  svAlbum.textContent = data.album || "";
+  renderStatusProgress(data);
+  renderStatusTracks(data.tracks);
+}
+
+function renderStatusProgress(data) {
+  const [done, total, title] = data.progress || [0, 0, ""];
+  let pct = 0;
+  if (total > 0) {
+    const term = data.tracks.filter(t => t.done || t.error).length;
+    pct = Math.round(term / total * 100);
+  }
+  const label = (title ? `${done}/${total} ${title}` : `${done}/${total}`) + " · " + pct + "%";
+  svProgress.textContent = label;
+  const bar = svTracks.querySelector(".sv-progress-fill");
+  if (bar) bar.style.width = pct + "%";
+}
+
+function renderStatusTracks(tracks) {
+  let html = '<div class="sv-progress-bar"><div class="sv-progress-fill" style="width:0%"></div></div>';
+  tracks.forEach((t, i) => {
+    let badge;
+    let retry = "";
+    if (t.done) {
+      badge = '<span class="sv-ok">Downloaded</span>';
+    } else if (t.error) {
+      badge = `<span class="sv-err" title="${esc(t.error)}">Failed: ${esc(t.error)}</span>`;
+      retry = `<button class="sv-retry" data-tid="${esc(svTid)}" data-idx="${i}">Retry</button>`;
+    } else {
+      badge = '<span class="sv-pending">Queued</span>';
+    }
+    const name = (t.artist && t.artist !== "Unknown Artist" ? t.artist + " - " : "") + t.title;
+    html += `<div class="sv-track"><span class="num">${i+1}</span><span class="sv-name" title="${esc(name)}">${esc(name)}</span>${badge}${retry}</div>`;
+  });
+  svTracks.innerHTML = html;
+}
+
+function pollStatus(tid) {
+  pollStopped = false;
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    if (pollStopped) return;
+    try {
+      const resp = await fetch(`${API}/api/status/${tid}`);
+      if (!resp.ok) throw new Error("status " + resp.status);
+      const data = await resp.json();
+      showStatusView(tid, data);
+      if (data.status === "done" || data.status === "error") {
+        stopPolling();
+        chrome.storage.session.remove("alacarrteTid").catch(() => {});
+        svAlbum.textContent = (data.album || "") + " — Complete";
+      }
+    } catch (err) {
+      statusEl.textContent = "Status error: " + err.message;
+    }
+  }, 1500);
+}
+
+function stopPolling() {
+  pollStopped = true;
+  clearInterval(pollTimer);
+}
+
+async function resumeStatusView() {
+  try {
+    const { alacarrteTid } = await chrome.storage.session.get("alacarrteTid");
+    if (!alacarrteTid) return false;
+    const resp = await fetch(`${API}/api/status/${alacarrteTid}`);
+    if (!resp.ok) { await chrome.storage.session.remove("alacarrteTid").catch(() => {}); return false; }
+    const data = await resp.json();
+    statusEl.textContent = "Watching existing download…";
+    showStatusView(alacarrteTid, data);
+    if (data.status !== "done" && data.status !== "error") {
+      pollStatus(alacarrteTid);
+    } else {
+      await chrome.storage.session.remove("alacarrteTid").catch(() => {});
+    }
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+let svTid = "";
+
 async function main() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs[0];
@@ -42,16 +148,20 @@ async function main() {
     cookieBtn.style.display = "";
   }
 
-  if (!currentUrl.match(/youtu\.?be/)) {
-    statusEl.textContent = "Navigate to a YouTube page first.";
-    return;
-  }
-
   let api;
   try {
     api = await initApi();
   } catch (err) {
     statusEl.textContent = "Error: " + err.message;
+    return;
+  }
+
+  // If a download is still running, resume watching it in the popup even if
+  // the active tab isn't a YouTube page.
+  if (await resumeStatusView()) return;
+
+  if (!currentUrl.match(/youtu\.?be/)) {
+    statusEl.textContent = "Navigate to a YouTube page first.";
     return;
   }
 
@@ -113,8 +223,16 @@ async function startDownload(url) {
 
   try {
     const data = await jsonFetch(`${api}/api/download`, fd);
+    const tid = data.tid;
     window.open(`${api}/?url=${encodeURIComponent(currentUrl)}`, "_blank");
-    statusEl.textContent = "Download started! Check the tab.";
+    statusEl.textContent = "Download started! Watching here…";
+    if (tid) {
+      svTid = tid;
+      await chrome.storage.session.set({ alacarrteTid: tid }).catch(() => {});
+      const st = await fetch(`${api}/api/status/${tid}`);
+      if (st.ok) showStatusView(tid, await st.json());
+      pollStatus(tid);
+    }
   } catch (err) {
     statusEl.textContent = "Error: " + err.message;
   } finally {
@@ -124,13 +242,20 @@ async function startDownload(url) {
   }
 }
 
-function esc(s) {
-  const d = document.createElement("div");
-  d.textContent = s;
-  return d.innerHTML;
-}
-
 main();
+
+svTracks.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".sv-retry");
+  if (!btn) return;
+  const tid = btn.dataset.tid;
+  const idx = btn.dataset.idx;
+  try {
+    await fetch(`${API}/api/retry-track/${tid}/${idx}`, { method: "POST" });
+    btn.textContent = "…";
+  } catch (err) {
+    btn.textContent = "err";
+  }
+});
 
 cookieBtn.onclick = sendCookies;
 
