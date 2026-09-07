@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt gunicorn==22.0.0
 
-COPY app.py /app/
+COPY app.py config.py state.py library.py engine.py /app/
 COPY templates/ /app/templates/
 COPY static/ /app/static/
 

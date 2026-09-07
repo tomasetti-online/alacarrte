@@ -3,12 +3,12 @@ import json
 import os
 import subprocess
 import threading
+import time
 
-import app as alacarrte
-
-
-def _seed_library(entries):
-    alacarrte.save_library(entries)
+import config
+import engine
+import library
+import state
 
 
 def _entry(tid, album, tracks):
@@ -16,13 +16,17 @@ def _entry(tid, album, tracks):
                 tracks=tracks, total=len(tracks), failed=0)
 
 
+def _seed_library(entries):
+    library.save_library(entries)
+
+
 def test_match_by_recording_id(tmp_path, monkeypatch):
-    monkeypatch.setattr(alacarrte, "LIBRARY_FILE", str(tmp_path / "library.json"))
+    monkeypatch.setattr(library, "LIBRARY_FILE", str(tmp_path / "library.json"))
     _seed_library([_entry("t1", "Old Album", [
         dict(title="Song One", artist="Artist", year="2020",
              mb_id="mb-123", file="01 - Song One.m4a"),
     ])])
-    dups = alacarrte.find_library_duplicates([
+    dups = library.find_library_duplicates([
         dict(id="x", title="Song One", artist="Artist", mb_id="mb-123"),
     ])
     assert len(dups) == 1
@@ -31,12 +35,11 @@ def test_match_by_recording_id(tmp_path, monkeypatch):
 
 
 def test_match_by_title_artist_fallback(tmp_path, monkeypatch):
-    monkeypatch.setattr(alacarrte, "LIBRARY_FILE", str(tmp_path / "library.json"))
-    # Library entry has no mb_id -> fall back to title+artist
+    monkeypatch.setattr(library, "LIBRARY_FILE", str(tmp_path / "library.json"))
     _seed_library([_entry("t1", "Old Album", [
         dict(title="Song One", artist="Artist", file="01 - Song One.m4a"),
     ])])
-    dups = alacarrte.find_library_duplicates([
+    dups = library.find_library_duplicates([
         dict(id="x", title="Song One", artist="Artist"),
         dict(id="y", title="Different", artist="Artist"),
     ])
@@ -46,13 +49,11 @@ def test_match_by_title_artist_fallback(tmp_path, monkeypatch):
 
 
 def test_match_by_recording_id_takes_precedence(tmp_path, monkeypatch):
-    # Same title/artist but a distinct recording id should NOT match on
-    # title+artist (which would be a false positive) when both have ids.
-    monkeypatch.setattr(alacarrte, "LIBRARY_FILE", str(tmp_path / "library.json"))
+    monkeypatch.setattr(library, "LIBRARY_FILE", str(tmp_path / "library.json"))
     _seed_library([_entry("t1", "Old Album", [
         dict(title="Song One", artist="Artist", mb_id="mb-abc", file="01 - Song One.m4a"),
     ])])
-    dups = alacarrte.find_library_duplicates([
+    dups = library.find_library_duplicates([
         dict(id="x", title="Song One", artist="Artist", mb_id="mb-xyz"),
     ])
     # Different recording id: falls through to title+artist, which still matches.
@@ -68,9 +69,11 @@ def _dump_single_json_song():
 
 
 def _api_fixture(tmp_path, monkeypatch):
-    monkeypatch.setattr(alacarrte, "DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setattr(alacarrte, "LIBRARY_FILE", str(tmp_path / "library.json"))
-    alacarrte.tasks.clear()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setattr(config, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(library, "LIBRARY_FILE", str(tmp_path / "library.json"))
+    state.tasks.clear()
 
     def fake_ytdl(args, timeout=180, task=None):
         if "--dump-single-json" in args:
@@ -87,8 +90,9 @@ def _api_fixture(tmp_path, monkeypatch):
         with open(flac, "w") as f:
             f.write("flacdata")
         return 0, "", ""
-    monkeypatch.setattr(alacarrte, "run_ytdl", fake_ytdl)
-    monkeypatch.setattr(alacarrte, "search_musicbrainz", lambda a, t: None)
+    monkeypatch.setattr(engine, "run_ytdl", fake_ytdl)
+    monkeypatch.setattr(engine, "search_musicbrainz", lambda a, t: None)
+
     class _FS:
         def run(self, args, **kw):
             out = args[-1]
@@ -96,14 +100,15 @@ def _api_fixture(tmp_path, monkeypatch):
             with open(out, "w") as f:
                 f.write("a")
             return subprocess.CompletedProcess(args, 0, b"", b"")
-    monkeypatch.setattr(alacarrte.subprocess, "run", _FS().run)
-    monkeypatch.setattr(alacarrte, "GLOBAL_SLOTS", threading.BoundedSemaphore(4))
-    return alacarrte.app.test_client()
+    monkeypatch.setattr(subprocess, "run", _FS().run)
+    monkeypatch.setattr(state, "GLOBAL_SLOTS", threading.BoundedSemaphore(4))
+
+    import app
+    return app.app.test_client()
 
 
 def test_skip_does_not_start_new_job(tmp_path, monkeypatch):
     c = _api_fixture(tmp_path, monkeypatch)
-    # Library already contains the track (matched by title+artist)
     _seed_library([_entry("t1", "Old Album", [
         dict(title="Song One", artist="Artist", file="01 - Song One.m4a"),
     ])])
@@ -113,7 +118,7 @@ def test_skip_does_not_start_new_job(tmp_path, monkeypatch):
     body = resp.get_json()
     assert "already in your library" in body["error"]
     assert len(body["duplicates"]) == 1
-    assert alacarrte.tasks == {}, "Skip must not start a new job"
+    assert state.tasks == {}, "Skip must not start a new job"
 
 
 def test_replace_proceeds_and_updates_library(tmp_path, monkeypatch):
@@ -122,25 +127,21 @@ def test_replace_proceeds_and_updates_library(tmp_path, monkeypatch):
         dict(title="Song One", artist="Artist", file="01 - Song One.m4a"),
     ])])
 
-    # Replace: job proceeds and a task is created.
     resp = c.post("/api/download", data={"url": "https://youtube.com/watch?v=abc123",
                                          "replace": "1"})
     assert resp.status_code == 200, resp.get_json()
     tid = resp.get_json()["tid"]
-    assert tid in alacarrte.tasks
+    assert tid in state.tasks
 
-    # api_download starts a background thread; wait for it to finish.
-    import time
     deadline = time.time() + 15
     while time.time() < deadline:
-        if alacarrte.tasks[tid].get("status") == "done":
+        if state.tasks[tid].get("status") == "done":
             break
         time.sleep(0.2)
-    assert alacarrte.tasks[tid]["status"] == "done"
+    assert state.tasks[tid]["status"] == "done"
 
-    entries = alacarrte.load_library()
+    entries = library.load_library()
     assert len(entries) == 1
     assert entries[0]["tid"] == tid
     assert entries[0]["album"] == "Downloaded Music"
-    # The old entry is gone (replaced), and the new one is present.
     assert all(e["tid"] != "t1" for e in entries)

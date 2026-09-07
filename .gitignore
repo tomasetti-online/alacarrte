@@ -6,3 +6,7 @@ data/
 cookies.txt
 .env
 *.log
+
+# runtime output dirs (task folders default to cwd when empty in tests)
+alac/
+raw/

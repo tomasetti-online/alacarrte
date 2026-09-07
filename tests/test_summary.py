@@ -4,7 +4,9 @@ import subprocess
 import threading
 import time
 
-import app as alacarrte
+import config
+import engine
+import state
 
 
 def _task(album="Sum Album", fmt="alac"):
@@ -32,9 +34,10 @@ class _FS:
 def _fixture(tmp_path, monkeypatch, fail_vid=None, calls=None):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    monkeypatch.setattr(alacarrte, "DATA_DIR", str(data_dir))
-    monkeypatch.setattr(alacarrte, "LIBRARY_FILE", str(data_dir / "library.json"))
-    alacarrte.tasks.clear()
+    import library
+    monkeypatch.setattr(config, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(library, "LIBRARY_FILE", str(data_dir / "library.json"))
+    state.tasks.clear()
 
     def fake_ytdl(args, timeout=180, task=None):
         if calls is not None:
@@ -53,22 +56,25 @@ def _fixture(tmp_path, monkeypatch, fail_vid=None, calls=None):
         with open(flac, "w") as f:
             f.write("flacdata")
         return 0, "", ""
-    monkeypatch.setattr(alacarrte, "run_ytdl", fake_ytdl)
-    monkeypatch.setattr(alacarrte, "search_musicbrainz", lambda a, t: None)
-    monkeypatch.setattr(alacarrte.subprocess, "run", _FS().run)
-    monkeypatch.setattr(alacarrte, "GLOBAL_SLOTS", threading.BoundedSemaphore(4))
+    monkeypatch.setattr(engine, "run_ytdl", fake_ytdl)
+    monkeypatch.setattr(engine, "search_musicbrainz", lambda a, t: None)
+    monkeypatch.setattr(subprocess, "run", _FS().run)
+    monkeypatch.setattr(state, "GLOBAL_SLOTS", threading.BoundedSemaphore(4))
     return str(data_dir)
 
 
+def _client():
+    import app
+    return app.app.test_client()
+
+
 def test_summary_reports_counts_and_fields(tmp_path, monkeypatch):
-    # One track fails (aa11), the other succeeds -> downloaded=1, failed=1.
     _fixture(tmp_path, monkeypatch, fail_vid="aa11")
     tid, t = _task()
-    alacarrte.tasks[tid] = t
-    alacarrte.do_download(tid, "https://youtube.com/watch?v=aa11", t["_dir"])
+    state.tasks[tid] = t
+    engine.do_download(tid, "https://youtube.com/watch?v=aa11", t["_dir"])
 
-    c = alacarrte.app.test_client()
-    r = c.get(f"/api/status/{tid}")
+    r = _client().get(f"/api/status/{tid}")
     assert r.status_code == 200
     d = r.get_json()
     assert d["status"] == "done"
@@ -84,10 +90,9 @@ def test_summary_reports_counts_and_fields(tmp_path, monkeypatch):
 def test_summary_zero_failed_clean_batch(tmp_path, monkeypatch):
     _fixture(tmp_path, monkeypatch)
     tid, t = _task()
-    alacarrte.tasks[tid] = t
-    alacarrte.do_download(tid, "https://youtube.com/watch?v=aa11", t["_dir"])
-    c = alacarrte.app.test_client()
-    s = c.get(f"/api/status/{tid}").get_json()["summary"]
+    state.tasks[tid] = t
+    engine.do_download(tid, "https://youtube.com/watch?v=aa11", t["_dir"])
+    s = _client().get(f"/api/status/{tid}").get_json()["summary"]
     assert s["downloaded"] == 2
     assert s["failed"] == 0
 
@@ -114,34 +119,33 @@ def test_retry_failed_reruns_only_failed_tracks(tmp_path, monkeypatch):
         with open(flac, "w") as f:
             f.write("flacdata")
         return 0, "", ""
-    monkeypatch.setattr(alacarrte, "run_ytdl", fake_ytdl)
-    monkeypatch.setattr(alacarrte, "search_musicbrainz", lambda a, t: None)
-    monkeypatch.setattr(alacarrte.subprocess, "run", _FS().run)
-    monkeypatch.setattr(alacarrte, "GLOBAL_SLOTS", threading.BoundedSemaphore(4))
+    monkeypatch.setattr(engine, "run_ytdl", fake_ytdl)
+    monkeypatch.setattr(engine, "search_musicbrainz", lambda a, t: None)
+    monkeypatch.setattr(subprocess, "run", _FS().run)
+    monkeypatch.setattr(state, "GLOBAL_SLOTS", threading.BoundedSemaphore(4))
+
     data_dir = tmp_path / "data"; data_dir.mkdir()
-    monkeypatch.setattr(alacarrte, "DATA_DIR", str(data_dir))
-    monkeypatch.setattr(alacarrte, "LIBRARY_FILE", str(data_dir / "library.json"))
-    alacarrte.tasks.clear()
+    import library
+    monkeypatch.setattr(config, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(library, "LIBRARY_FILE", str(data_dir / "library.json"))
+    state.tasks.clear()
 
     tid, t = _task()
-    alacarrte.tasks[tid] = t
-    alacarrte.do_download(tid, "https://youtube.com/watch?v=aa11", t["_dir"])
+    state.tasks[tid] = t
+    engine.do_download(tid, "https://youtube.com/watch?v=aa11", t["_dir"])
     assert t["tracks"][0]["error"], "first track should have failed initially"
     assert t["tracks"][1]["done"]
     runs_before = dict(runs)
 
-    c = alacarrte.app.test_client()
-    r = c.post(f"/api/retry-failed/{tid}")
+    r = _client().post(f"/api/retry-failed/{tid}")
     assert r.status_code == 200
     assert r.get_json()["retried"] == 1
 
-    # Wait for the worker to finish.
     deadline = time.time() + 15
-    while time.time() < deadline and alacarrte.tasks[tid].get("status") != "done":
+    while time.time() < deadline and state.tasks[tid].get("status") != "done":
         time.sleep(0.2)
-    assert alacarrte.tasks[tid]["status"] == "done"
+    assert state.tasks[tid]["status"] == "done"
 
-    # Only the failed track was re-run (bb22's run count is unchanged).
     assert runs["bb22"] == runs_before["bb22"], "successful track must not be re-run"
     assert runs["aa11"] == runs_before["aa11"] + 1, "failed track must be re-run once"
     assert t["tracks"][0]["done"], "failed track should be done after retry"
@@ -152,8 +156,7 @@ def test_retry_failed_reruns_only_failed_tracks(tmp_path, monkeypatch):
 def test_retry_failed_no_failures_rejected(tmp_path, monkeypatch):
     _fixture(tmp_path, monkeypatch)
     tid, t = _task()
-    alacarrte.tasks[tid] = t
-    alacarrte.do_download(tid, "https://youtube.com/watch?v=aa11", t["_dir"])
-    c = alacarrte.app.test_client()
-    r = c.post(f"/api/retry-failed/{tid}")
+    state.tasks[tid] = t
+    engine.do_download(tid, "https://youtube.com/watch?v=aa11", t["_dir"])
+    r = _client().post(f"/api/retry-failed/{tid}")
     assert r.status_code == 409
