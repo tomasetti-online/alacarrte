@@ -30,14 +30,42 @@ CLEANUP_INTERVAL = 600
 GLOBAL_SLOTS = threading.Semaphore(CONCURRENCY)
 rate_map = {}
 
+# --- Download library (persisted so history survives reload/restart) -----
+# Each completed job is recorded here so users can re-grab their ZIPs and the
+# cleanup thread knows which jobs to keep. Kept small and capped.
+LIBRARY_FILE = os.path.join(DATA_DIR, "library.json")
+LIBRARY_CAP = 50
+
+
+def load_library():
+    if not os.path.exists(LIBRARY_FILE):
+        return []
+    try:
+        with open(LIBRARY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def save_library(entries):
+    with open(LIBRARY_FILE, "w", encoding="utf-8") as f:
+        json.dump(entries, f, indent=2)
+
+
+def library_tids():
+    return {e.get("tid") for e in load_library()}
+
 def bg_cleanup():
     while True:
         time.sleep(CLEANUP_INTERVAL)
         now = time.time()
         with LOCK:
+            lib = library_tids()
             dead = [tid for tid, t in tasks.items()
                     if t["status"] in ("done", "error")
-                    and now - t["_ts"] > 604800]  # 7 days
+                    and now - t["_ts"] > 604800  # 7 days
+                    and tid not in lib]  # library jobs are exempt
             for tid in dead:
                 shutil.rmtree(tasks[tid]["_dir"], ignore_errors=True)
                 del tasks[tid]
@@ -403,6 +431,33 @@ def do_download(tid, url, folder):
     t["status"] = "done"
     t["_ts"] = time.time()
 
+    # Record the completed job in the persisted library so it survives a
+    # reload/restart and is exempt from cleanup. Cover is copied out so it
+    # lives as long as the library entry.
+    try:
+        lib = load_library()
+        lib = [e for e in lib if e.get("tid") != tid]
+        entry = dict(
+            tid=tid, album=t["album"], format=t.get("format", "alac"),
+            timestamp=t["_ts"],
+            tracks=[dict(title=tr.get("title"), artist=tr.get("artist"),
+                         year=tr.get("year", ""),
+                         file=os.path.basename(tr["path"]) if tr.get("path") else None)
+                    for tr in t["tracks"] if tr.get("done")],
+            total=len(t["tracks"]),
+            failed=sum(1 for tr in t["tracks"] if tr.get("error")),
+        )
+        if cover_path and os.path.exists(cover_path):
+            lib_cover_dir = os.path.join(DATA_DIR, "_library_covers")
+            os.makedirs(lib_cover_dir, exist_ok=True)
+            lib_cover = os.path.join(lib_cover_dir, tid + ".jpg")
+            shutil.copy2(cover_path, lib_cover)
+            entry["cover"] = lib_cover
+        lib.insert(0, entry)
+        save_library(lib[:LIBRARY_CAP])
+    except Exception:
+        pass
+
     # Auto-send to Plex if available (only for admin IPs)
     try:
         if PLEX_DIR and os.path.isdir(PLEX_DIR) and t.get("client_ip") in ADMIN_IPS:
@@ -587,6 +642,21 @@ def api_status(tid):
                 for tr in t["tracks"]],
         progress=list(t["progress"]),
     )
+
+@app.route("/api/library")
+def api_library():
+    """Return the persisted download library, newest first."""
+    return jsonify(library=load_library())
+
+
+@app.route("/dl/<tid>/cover")
+def serve_cover(tid):
+    """Serve the cached library cover for a completed job, if present."""
+    for e in load_library():
+        if e.get("tid") == tid and e.get("cover") and os.path.exists(e["cover"]):
+            return send_file(e["cover"], mimetype="image/jpeg")
+    abort(404)
+
 
 @app.route("/status/<tid>")
 def status_page(tid):
